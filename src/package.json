@@ -1,0 +1,21 @@
+{
+  "name": "monorepo-reactjs-node-postgres",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": "20.19.6"
+  },
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace web\" \"npm run dev --workspace api\"",
+    "dev:web": "npm run dev --workspace web",
+    "dev:api": "npm run dev --workspace api",
+    "build": "npm run build --workspace web",
+    "start:api": "npm run start --workspace api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
