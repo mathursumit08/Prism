@@ -8,7 +8,10 @@
   },
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "migrate": "node src/data/migrations/migrate.js",
+    "prestart": "npm run migrate",
+    "db:generate-seed": "node src/data/migrations/generateSeedSql.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
