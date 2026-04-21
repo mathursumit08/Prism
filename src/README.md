@@ -83,6 +83,51 @@ npm run dev:api
 
 - `GET /api/health`
 - `GET /api/db-check`
+- `GET /api/forecasts/baseline`
+
+### Baseline forecast API
+
+The forecast worker stores baseline ARIMA/ETS forecasts in `forecast_runs` and
+`forecast_data`. The API returns the latest completed stored forecast run.
+See `docs/forecasting-methodology.md` for the calculation details.
+
+Query parameters:
+
+- `level`: `dealer`, `state`, or `zone` (omit for all levels)
+- `modelId`: optional model filter, for example `MDL001`
+- `variantId`: optional variant filter, for example `VAR001`
+
+Examples:
+
+```bash
+curl "http://localhost:4000/api/forecasts/baseline?level=dealer"
+curl "http://localhost:4000/api/forecasts/baseline?level=state&modelId=MDL001"
+curl "http://localhost:4000/api/forecasts/baseline?level=zone&variantId=VAR001"
+```
+
+### Forecast worker
+
+Run migrations to create forecast tables:
+
+```bash
+npm run migrate:api
+```
+
+Generate and store forecasts immediately:
+
+```bash
+npm run forecast:run
+```
+
+Run the separate worker process that schedules generation every night at 12:00 AM:
+
+```bash
+npm run worker:forecast
+```
+
+Docker Compose also includes a `forecast-worker` service. It runs migrations on
+startup, stays alive as a separate process, and generates the latest stored
+baseline forecast every night at 12:00 AM India time.
 
 ## Notes
 
