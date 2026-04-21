@@ -14,7 +14,9 @@
     "dev:api": "npm run dev --workspace api",
     "build": "npm run build --workspace web",
     "start:api": "npm run start --workspace api",
-    "migrate:api": "npm run migrate --workspace api"
+    "migrate:api": "npm run migrate --workspace api",
+    "worker:forecast": "npm run worker:forecast --workspace api",
+    "forecast:run": "npm run forecast:run --workspace api"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

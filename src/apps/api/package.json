@@ -9,6 +9,10 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
+    "preworker:forecast": "npm run migrate",
+    "worker:forecast": "node src/workers/forecastWorker.js",
+    "preforecast:run": "npm run migrate",
+    "forecast:run": "node src/workers/forecastWorker.js --once",
     "migrate": "node src/data/migrations/migrate.js",
     "prestart": "npm run migrate",
     "db:generate-seed": "node src/data/migrations/generateSeedSql.js"
