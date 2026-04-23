@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { ForecastData, ForecastRun } from "../data/models/index.js";
+import { pool } from "../db.js";
 
 const router = Router();
 const allowedLevels = new Set(["dealer", "state", "zone"]);
@@ -39,12 +40,100 @@ function groupForecastRows(rows) {
   return [...groups.values()];
 }
 
+function groupActualRows(rows) {
+  const groups = new Map();
+
+  for (const row of rows) {
+    const key = `${row.level}:${row.group_id}`;
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        level: row.level,
+        groupId: row.group_id,
+        groupLabel: row.group_label,
+        actuals: []
+      });
+    }
+
+    groups.get(key).actuals.push({
+      month: row.month,
+      unitsSold: Number(row.units_sold)
+    });
+  }
+
+  return [...groups.values()];
+}
+
+async function findActualRows({ level, groupId, segment, modelId, variantId }) {
+  const levelColumns = {
+    dealer: {
+      id: "d.dealer_id",
+      label: "d.dealer_name"
+    },
+    state: {
+      id: "d.state",
+      label: "d.state"
+    },
+    zone: {
+      id: "d.region",
+      label: "d.region"
+    }
+  };
+
+  const resolvedLevel = levelColumns[level] ? level : "dealer";
+  const config = levelColumns[resolvedLevel];
+  const values = [];
+  const conditions = [];
+
+  if (groupId) {
+    values.push(groupId);
+    conditions.push(`${config.id} = $${values.length + 1}`);
+  }
+
+  if (segment) {
+    values.push(segment);
+    conditions.push(`vm.segment = $${values.length + 1}`);
+  }
+
+  if (modelId) {
+    values.push(modelId);
+    conditions.push(`m.model_id = $${values.length + 1}`);
+  }
+
+  if (variantId) {
+    values.push(variantId);
+    conditions.push(`m.variant_id = $${values.length + 1}`);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const result = await pool.query(
+    `
+      SELECT
+        $1::VARCHAR AS level,
+        ${config.id} AS group_id,
+        ${config.label} AS group_label,
+        TO_CHAR(m.month, 'YYYY-MM-01') AS month,
+        SUM(m.units_sold)::INTEGER AS units_sold
+      FROM monthly_sales_data m
+      JOIN dealers d ON d.dealer_id = m.dealer_id
+      JOIN vehicle_models vm ON vm.model_id = m.model_id
+      ${where}
+      GROUP BY ${config.id}, ${config.label}, m.month
+      ORDER BY ${config.label}, m.month
+    `,
+    [resolvedLevel, ...values]
+  );
+
+  return result.rows;
+}
+
 /**
  * Returns the latest completed stored baseline forecast filtered by query string.
  */
 router.get("/baseline", async (request, response) => {
   const level = request.query.level;
   const groupId = request.query.groupId || request.query.dealerId;
+  const segment = request.query.segment;
   const modelId = request.query.modelId || request.query.ModelId;
   const variantId = request.query.variantId || request.query.VariantId;
 
@@ -70,6 +159,7 @@ router.get("/baseline", async (request, response) => {
     const rows = await ForecastData.findLatest({
       level,
       groupId,
+      segment,
       modelId,
       variantId
     });
@@ -82,10 +172,54 @@ router.get("/baseline", async (request, response) => {
       filters: {
         level: level || "all",
         groupId: groupId || null,
+        segment: segment || null,
         modelId: modelId || null,
         variantId: variantId || null
       },
       series: groupForecastRows(rows)
+    });
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+router.get("/actuals", async (request, response) => {
+  const level = request.query.level;
+  const groupId = request.query.groupId || request.query.dealerId;
+  const segment = request.query.segment;
+  const modelId = request.query.modelId || request.query.ModelId;
+  const variantId = request.query.variantId || request.query.VariantId;
+
+  if (level && !allowedLevels.has(level)) {
+    response.status(400).json({
+      ok: false,
+      error: `Unsupported forecast level "${level}"`
+    });
+    return;
+  }
+
+  try {
+    const rows = await findActualRows({
+      level,
+      groupId,
+      segment,
+      modelId,
+      variantId
+    });
+
+    response.json({
+      ok: true,
+      filters: {
+        level: level || "dealer",
+        groupId: groupId || null,
+        segment: segment || null,
+        modelId: modelId || null,
+        variantId: variantId || null
+      },
+      series: groupActualRows(rows)
     });
   } catch (error) {
     response.status(500).json({

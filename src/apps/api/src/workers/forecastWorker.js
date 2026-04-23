@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import { pool } from "../db.js";
 import { buildBaselineForecast } from "../forecasting/baselineForecast.js";
-import { ForecastData, ForecastRun } from "../data/models/index.js";
+import { ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
 
 dotenv.config();
 
@@ -31,6 +31,131 @@ function buildForecastKey({
     variantId ?? "",
     forecastMonth
   ].join("|");
+}
+
+/**
+ * Returns the month number for a YYYY-MM-01 string using UTC.
+ */
+function getMonthNumber(month) {
+  return new Date(`${month}T00:00:00.000Z`).getUTCMonth() + 1;
+}
+
+/**
+ * Checks whether a month falls inside an inclusive recurring festive window.
+ */
+function monthFallsInWindow(monthNumber, startMonth, endMonth) {
+  if (startMonth <= endMonth) {
+    return monthNumber >= startMonth && monthNumber <= endMonth;
+  }
+
+  return monthNumber >= startMonth || monthNumber <= endMonth;
+}
+
+/**
+ * Returns the active festive-event rules that apply to the provided forecast month.
+ */
+function findMatchingEvents(month, eventCalendar) {
+  const monthNumber = getMonthNumber(month);
+
+  return eventCalendar.filter((event) =>
+    monthFallsInWindow(monthNumber, Number(event.start_month), Number(event.end_month))
+  );
+}
+
+/**
+ * Applies the configured festive uplift to a single forecast point.
+ */
+function applyPointUplift(point, eventCalendar) {
+  const matchingEvents = findMatchingEvents(point.month, eventCalendar);
+  const totalUpliftPct = matchingEvents.reduce((sum, event) => sum + Number(event.uplift_pct), 0);
+  const upliftedUnitsSold = Math.max(0, Math.round(point.unitsSold * (1 + totalUpliftPct / 100)));
+
+  return {
+    ...point,
+    unitsSold: upliftedUnitsSold
+  };
+}
+
+/**
+ * Applies festive uplift rules to dealer-level forecast series.
+ */
+function applyEventUpliftsToDealerSeries(dealerSeries, eventCalendar) {
+  if (eventCalendar.length === 0) {
+    return dealerSeries;
+  }
+
+  return dealerSeries.map((series) => ({
+    ...series,
+    method: `${series.method} + event-uplift`,
+    forecast: series.forecast.map((point) => applyPointUplift(point, eventCalendar))
+  }));
+}
+
+/**
+ * Rolls adjusted dealer forecasts up to state or zone level while preserving totals.
+ */
+function aggregateAdjustedDealers(dealerSeries, level) {
+  const grouped = new Map();
+
+  for (const dealer of dealerSeries) {
+    const groupId = level === "state" ? dealer.state : dealer.zone;
+
+    if (!grouped.has(groupId)) {
+      grouped.set(groupId, {
+        level,
+        groupId,
+        groupLabel: groupId,
+        method: "aggregated-from-dealers + event-uplift",
+        validation: {
+          mae: null,
+          rmse: null,
+          mape: null
+        },
+        history: dealer.history.map((point) => ({
+          month: point.month,
+          unitsSold: 0
+        })),
+        forecast: dealer.forecast.map((point) => ({
+          month: point.month,
+          unitsSold: 0
+        }))
+      });
+    }
+
+    const aggregate = grouped.get(groupId);
+
+    dealer.history.forEach((point, index) => {
+      aggregate.history[index].unitsSold += point.unitsSold;
+    });
+
+    dealer.forecast.forEach((point, index) => {
+      aggregate.forecast[index].unitsSold += point.unitsSold;
+    });
+  }
+
+  return [...grouped.values()];
+}
+
+/**
+ * Builds the final dealer, state, and zone output after festive uplifts are applied.
+ */
+function buildAdjustedForecastLevels(dealerSeries, eventCalendar) {
+  const adjustedDealers = applyEventUpliftsToDealerSeries(dealerSeries, eventCalendar);
+
+  return [
+    {
+      level: "dealer",
+      series: adjustedDealers
+    },
+    {
+      level: "state",
+      series: aggregateAdjustedDealers(adjustedDealers, "state")
+    },
+    {
+      level: "zone",
+      series: aggregateAdjustedDealers(adjustedDealers, "zone")
+    }
+  ];
 }
 
 /**
@@ -77,6 +202,18 @@ async function fetchForecastScopes(db = pool) {
       variantId: row.variant_id
     }))
   ];
+}
+
+/**
+ * Loads all active festive-event uplift rules used during the current refresh.
+ */
+async function fetchEventCalendar(db = pool) {
+  return ForecastEventCalendar.findActive(
+    {
+      forecastType: FORECAST_TYPE
+    },
+    db
+  );
 }
 
 /**
@@ -189,21 +326,26 @@ export async function runForecastWorker({ horizon = parseHorizon(process.env.FOR
     );
 
     const scopes = await fetchForecastScopes(client);
+    const eventCalendar = await fetchEventCalendar(client);
     const allRecords = [];
 
     for (const scope of scopes) {
-      const forecast = await buildBaselineForecast({
-        level: "all",
+      const dealerForecast = await buildBaselineForecast({
+        level: "dealer",
         horizon,
         modelId: scope.modelId,
         variantId: scope.variantId
       });
+      const adjustedForecast = {
+        ...dealerForecast,
+        levels: buildAdjustedForecastLevels(dealerForecast.levels[0]?.series ?? [], eventCalendar)
+      };
 
       allRecords.push(
         ...flattenForecast({
           runId: run.run_id,
           scope,
-          forecast
+          forecast: adjustedForecast
         })
       );
     }
