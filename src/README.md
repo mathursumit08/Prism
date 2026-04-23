@@ -90,6 +90,7 @@ npm run dev:api
 The forecast worker stores baseline ARIMA/ETS forecasts in `forecast_runs` and
 `forecast_data`. The API returns the latest completed stored forecast run.
 See `docs/forecasting-methodology.md` for the calculation details.
+Festive uplift rules are configured in `forecast_event_calendar`.
 
 Query parameters:
 
@@ -112,6 +113,9 @@ Run migrations to create forecast tables:
 ```bash
 npm run migrate:api
 ```
+
+Seeded festive events include New Year, Ugaadi, Dussehra, and Diwali through
+the `forecast_event_calendar` migration scripts.
 
 Generate and store forecasts immediately:
 

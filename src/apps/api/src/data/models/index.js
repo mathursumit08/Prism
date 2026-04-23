@@ -1,6 +1,7 @@
 export { CustomerSalesData } from "./customerSalesData.js";
 export { Dealer } from "./dealers.js";
 export { ForecastData } from "./forecastData.js";
+export { ForecastEventCalendar } from "./forecastEventCalendar.js";
 export { ForecastRun } from "./forecastRuns.js";
 export { MonthlySalesData } from "./monthlySalesData.js";
 export { SalesPersonnel } from "./salesPersonnel.js";

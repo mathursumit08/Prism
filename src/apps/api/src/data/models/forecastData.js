@@ -113,7 +113,7 @@ export const ForecastData = {
   /**
    * Reads forecast rows from the latest completed run with optional hierarchy filters.
    */
-  async findLatest({ level, groupId, modelId, variantId, forecastType = "baseline" }, db = pool) {
+  async findLatest({ level, groupId, segment, modelId, variantId, forecastType = "baseline" }, db = pool) {
     const latestRunId = await findLatestCompletedRunId(forecastType, db);
 
     if (!latestRunId) {
@@ -122,12 +122,13 @@ export const ForecastData = {
 
     const exactRows = await findLatestExactRows(
       {
-      latestRunId,
-      level,
-      groupId,
-      modelId,
-      variantId,
-      forecastType
+        latestRunId,
+        level,
+        groupId,
+        segment,
+        modelId,
+        variantId,
+        forecastType
       },
       db
     );
@@ -138,10 +139,11 @@ export const ForecastData = {
 
     return findAllModelAggregateRows(
       {
-      latestRunId,
-      level,
-      groupId,
-      forecastType
+        latestRunId,
+        level,
+        groupId,
+        segment,
+        forecastType
       },
       db
     );
@@ -165,7 +167,7 @@ async function findLatestCompletedRunId(forecastType, db = pool) {
 }
 
 async function findLatestExactRows(
-  { latestRunId, level, groupId, modelId, variantId, forecastType },
+  { latestRunId, level, groupId, segment, modelId, variantId, forecastType },
   db = pool
 ) {
   const conditions = ["fd.forecast_type = $1"];
@@ -179,6 +181,10 @@ async function findLatestExactRows(
   if (groupId) {
     values.push(groupId);
     conditions.push(`fd.group_id = $${values.length}`);
+  }
+
+  if (segment && !modelId && !variantId) {
+    return [];
   }
 
   if (modelId) {
@@ -226,7 +232,7 @@ async function findLatestExactRows(
   return result.rows;
 }
 
-async function findAllModelAggregateRows({ latestRunId, level, groupId, forecastType }, db = pool) {
+async function findAllModelAggregateRows({ latestRunId, level, groupId, segment, forecastType }, db = pool) {
   const conditions = [
     "fd.forecast_type = $1",
     "fd.run_id = $2",
@@ -243,6 +249,11 @@ async function findAllModelAggregateRows({ latestRunId, level, groupId, forecast
   if (groupId) {
     values.push(groupId);
     conditions.push(`fd.group_id = $${values.length}`);
+  }
+
+  if (segment) {
+    values.push(segment);
+    conditions.push(`vm.segment = $${values.length}`);
   }
 
   const result = await db.query(
@@ -264,6 +275,7 @@ async function findAllModelAggregateRows({ latestRunId, level, groupId, forecast
         NULL::NUMERIC AS validation_mape,
         MAX(fd.generated_at) AS generated_at
       FROM forecast_data fd
+      JOIN vehicle_models vm ON vm.model_id = fd.model_id
       JOIN forecast_runs fr ON fr.run_id = fd.run_id
       WHERE ${conditions.join(" AND ")}
         AND fr.status = 'completed'

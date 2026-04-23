@@ -13,6 +13,8 @@ The nightly worker stores the generated values in `forecast_runs` and
 `forecast_data`, and the API returns the latest completed stored forecast.
 The hierarchy is reconciled, which means dealerwise totals, statewise totals,
 and zonewise totals match exactly for the same scope and forecast month.
+Active festive-event uplifts are loaded from `forecast_event_calendar` and
+applied during the nightly refresh.
 
 ## Data Preparation
 
@@ -33,6 +35,28 @@ month inside that range, the missing month is filled as `0` units.
 Statewise and zonewise results are not forecast independently. They are derived
 by summing the dealer-level histories and dealer-level forecasts. This keeps the
 hierarchy coherent.
+
+## Festive Event Calendar
+
+Festive adjustments are configured in the `forecast_event_calendar` table. Each
+row defines:
+
+- forecast type
+- event code and name
+- recurring start month and end month
+- uplift percentage
+- active flag
+
+The seeded sample events are:
+
+- New Year
+- Ugaadi
+- Dussehra
+- Diwali
+
+Because the forecasting grain is monthly, the event calendar is also monthly.
+An event can cover a single month or a month window. Multiple events can apply
+to the same month, and their uplift percentages are added together.
 
 ## Candidate Models
 
@@ -95,6 +119,28 @@ After dealer forecasts are created, the system rolls them up:
 Because those higher levels are aggregated from dealer results, total forecasted
 units remain consistent across dealerwise, statewise, and zonewise views.
 
+## Event Uplifts
+
+After the baseline dealer forecast is produced, the worker checks the forecast
+month against `forecast_event_calendar`.
+
+For a forecast month:
+
+- if no event matches, the baseline forecast is unchanged
+- if one or more events match, their `uplift_pct` values are summed
+- the adjusted forecast becomes:
+
+`adjusted units = round(baseline units * (1 + total uplift pct / 100))`
+
+Example:
+
+- baseline dealer forecast for November = 100 units
+- Diwali uplift = 12.5%
+- adjusted dealer forecast = `round(100 * 1.125)` = 113 units
+
+The worker applies uplift to dealer forecasts first and then rebuilds state and
+zone totals from those adjusted dealer values, so hierarchy totals stay aligned.
+
 ## Output Values
 
 Forecasts are rounded to whole vehicle units and clipped at `0` so the stored
@@ -125,11 +171,13 @@ The worker flow is:
 1. Acquire a Postgres advisory lock so duplicate worker processes do not overlap.
 2. Create a `forecast_runs` row with status `running`.
 3. Build all overall, model, and variant scopes.
-4. Generate dealerwise, statewise, and zonewise forecasts for each scope.
-5. Upsert current forecast points into `forecast_data`.
-6. Remove any old forecast rows that are no longer produced by the latest run.
-7. Mark the `forecast_runs` row as `completed`.
-8. If an error occurs, mark the run as `failed` with the error message.
+4. Load active festive-event uplift rules from `forecast_event_calendar`.
+5. Generate dealerwise baseline forecasts for each scope.
+6. Apply festive-event uplifts to dealer forecasts and rebuild state and zone totals.
+7. Upsert current forecast points into `forecast_data`.
+8. Remove any old forecast rows that are no longer produced by the latest run.
+9. Mark the `forecast_runs` row as `completed`.
+10. If an error occurs, mark the run as `failed` with the error message.
 
 For immediate generation, use:
 
