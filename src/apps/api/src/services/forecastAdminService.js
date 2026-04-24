@@ -1,4 +1,5 @@
 import { ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
+import { ForecastCacheService } from "./forecastCacheService.js";
 import { runForecastWorker } from "../workers/forecastWorker.js";
 
 const FORECAST_TYPE = "baseline";
@@ -127,7 +128,9 @@ export const ForecastAdminService = {
       throw error;
     }
 
-    return ForecastData.clearByForecastType(FORECAST_TYPE);
+    const deleted = await ForecastData.clearByForecastType(FORECAST_TYPE);
+    ForecastCacheService.clear();
+    return deleted;
   },
 
   async regenerateForecast({ horizon }) {

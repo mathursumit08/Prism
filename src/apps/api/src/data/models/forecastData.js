@@ -15,6 +15,7 @@ export const ForecastData = {
       "level",
       "group_id",
       "group_label",
+      "segment",
       "model_id",
       "variant_id",
       "forecast_month",
@@ -34,6 +35,7 @@ export const ForecastData = {
         record.level,
         record.groupId,
         record.groupLabel,
+        record.segment,
         record.modelId,
         record.variantId,
         record.forecastMonth,
@@ -51,10 +53,11 @@ export const ForecastData = {
       `
         INSERT INTO forecast_data (${columns.join(", ")})
         VALUES ${placeholders.join(", ")}
-        ON CONFLICT (forecast_type, level, group_id, model_id, variant_id, forecast_month)
+        ON CONFLICT (forecast_type, level, group_id, segment, model_id, variant_id, forecast_month)
         DO UPDATE SET
           run_id = EXCLUDED.run_id,
           group_label = EXCLUDED.group_label,
+          segment = EXCLUDED.segment,
           forecast_units = EXCLUDED.forecast_units,
           model_method = EXCLUDED.model_method,
           validation_mae = EXCLUDED.validation_mae,
@@ -79,6 +82,7 @@ export const ForecastData = {
           forecast_type,
           level,
           group_id,
+          segment,
           model_id,
           variant_id,
           TO_CHAR(forecast_month, 'YYYY-MM-01') AS forecast_month
@@ -144,14 +148,27 @@ export const ForecastData = {
   /**
    * Reads forecast rows from the latest completed run with optional hierarchy filters.
    */
-  async findLatest({ level, groupId, segment, modelId, variantId, forecastType = "baseline" }, db = pool) {
+  async findLatest({ level, groupId, segment, modelId, variantId, breakdown, forecastType = "baseline" }, db = pool) {
     const latestRunId = await findLatestCompletedRunId(forecastType, db);
 
     if (!latestRunId) {
       return [];
     }
 
-    const exactRows = await findLatestExactRows(
+    if (breakdown === "segment") {
+      return findLatestSegmentBreakdownRows(
+        {
+          latestRunId,
+          level,
+          groupId,
+          segment,
+          forecastType
+        },
+        db
+      );
+    }
+
+    return findLatestExactRows(
       {
         latestRunId,
         level,
@@ -159,21 +176,6 @@ export const ForecastData = {
         segment,
         modelId,
         variantId,
-        forecastType
-      },
-      db
-    );
-
-    if (exactRows.length > 0 || modelId || variantId) {
-      return exactRows;
-    }
-
-    return findAllModelAggregateRows(
-      {
-        latestRunId,
-        level,
-        groupId,
-        segment,
         forecastType
       },
       db
@@ -214,14 +216,17 @@ async function findLatestExactRows(
     conditions.push(`fd.group_id = $${values.length}`);
   }
 
-  if (segment && !modelId && !variantId) {
-    return [];
+  if (segment) {
+    values.push(segment);
+    conditions.push(`fd.segment = $${values.length}`);
+  } else if (!modelId && !variantId) {
+    conditions.push("fd.segment IS NULL");
   }
 
   if (modelId) {
     values.push(modelId);
     conditions.push(`fd.model_id = $${values.length}`);
-  } else if (!variantId) {
+  } else {
     conditions.push("fd.model_id IS NULL");
   }
 
@@ -234,40 +239,42 @@ async function findLatestExactRows(
 
   const result = await db.query(
     `
-        SELECT
-          fr.run_id,
-          fr.horizon_months,
-          fr.completed_at,
-          fd.level,
-          fd.group_id,
-          fd.group_label,
-          fd.model_id,
-          fd.variant_id,
-          TO_CHAR(fd.forecast_month, 'YYYY-MM-01') AS forecast_month,
-          fd.forecast_units,
-          fd.model_method,
-          fd.validation_mae,
-          fd.validation_rmse,
-          fd.validation_mape,
-          fd.generated_at
-        FROM forecast_data fd
-        JOIN forecast_runs fr ON fr.run_id = fd.run_id
-        WHERE ${conditions.join(" AND ")}
-          AND fd.run_id = $2
-          AND fr.status = 'completed'
-        ORDER BY fd.level, fd.group_id, fd.forecast_month
-      `,
+      SELECT
+        fr.run_id,
+        fr.horizon_months,
+        fr.completed_at,
+        fd.level,
+        fd.group_id,
+        fd.group_label,
+        fd.segment,
+        fd.model_id,
+        fd.variant_id,
+        TO_CHAR(fd.forecast_month, 'YYYY-MM-01') AS forecast_month,
+        fd.forecast_units,
+        fd.model_method,
+        fd.validation_mae,
+        fd.validation_rmse,
+        fd.validation_mape,
+        fd.generated_at
+      FROM forecast_data fd
+      JOIN forecast_runs fr ON fr.run_id = fd.run_id
+      WHERE ${conditions.join(" AND ")}
+        AND fd.run_id = $2
+        AND fr.status = 'completed'
+      ORDER BY fd.level, fd.group_id, fd.forecast_month
+    `,
     values
   );
 
   return result.rows;
 }
 
-async function findAllModelAggregateRows({ latestRunId, level, groupId, segment, forecastType }, db = pool) {
+async function findLatestSegmentBreakdownRows({ latestRunId, level, groupId, segment, forecastType }, db = pool) {
   const conditions = [
     "fd.forecast_type = $1",
     "fd.run_id = $2",
-    "fd.model_id IS NOT NULL",
+    "fd.segment IS NOT NULL",
+    "fd.model_id IS NULL",
     "fd.variant_id IS NULL"
   ];
   const values = [forecastType, latestRunId];
@@ -284,7 +291,7 @@ async function findAllModelAggregateRows({ latestRunId, level, groupId, segment,
 
   if (segment) {
     values.push(segment);
-    conditions.push(`vm.segment = $${values.length}`);
+    conditions.push(`fd.segment = $${values.length}`);
   }
 
   const result = await db.query(
@@ -296,29 +303,21 @@ async function findAllModelAggregateRows({ latestRunId, level, groupId, segment,
         fd.level,
         fd.group_id,
         fd.group_label,
-        NULL::VARCHAR(16) AS model_id,
-        NULL::VARCHAR(16) AS variant_id,
+        fd.segment,
+        fd.model_id,
+        fd.variant_id,
         TO_CHAR(fd.forecast_month, 'YYYY-MM-01') AS forecast_month,
-        SUM(fd.forecast_units)::INTEGER AS forecast_units,
-        'Aggregated model forecasts' AS model_method,
-        NULL::NUMERIC AS validation_mae,
-        NULL::NUMERIC AS validation_rmse,
-        NULL::NUMERIC AS validation_mape,
-        MAX(fd.generated_at) AS generated_at
+        fd.forecast_units,
+        fd.model_method,
+        fd.validation_mae,
+        fd.validation_rmse,
+        fd.validation_mape,
+        fd.generated_at
       FROM forecast_data fd
-      JOIN vehicle_models vm ON vm.model_id = fd.model_id
       JOIN forecast_runs fr ON fr.run_id = fd.run_id
       WHERE ${conditions.join(" AND ")}
         AND fr.status = 'completed'
-      GROUP BY
-        fr.run_id,
-        fr.horizon_months,
-        fr.completed_at,
-        fd.level,
-        fd.group_id,
-        fd.group_label,
-        fd.forecast_month
-      ORDER BY fd.level, fd.group_id, fd.forecast_month
+      ORDER BY fd.level, fd.group_id, fd.segment, fd.forecast_month
     `,
     values
   );

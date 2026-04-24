@@ -213,6 +213,10 @@ select:disabled {
   margin: 20px auto 0;
 }
 
+.forecast-summary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .analytics-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -241,6 +245,10 @@ select:disabled {
 
 .metric:nth-child(3) {
   border-top-color: #d04f3a;
+}
+
+.metric:nth-child(4) {
+  border-top-color: #6c63ff;
 }
 
 .metric span {
