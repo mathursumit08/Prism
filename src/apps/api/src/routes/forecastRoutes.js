@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { ForecastData, ForecastRun } from "../data/models/index.js";
 import { ForecastAdminService } from "../services/forecastAdminService.js";
+import { ForecastCacheService } from "../services/forecastCacheService.js";
 import { pool } from "../db.js";
 
 const router = Router();
@@ -9,19 +10,22 @@ const allowedLevels = new Set(["dealer", "state", "zone"]);
 /**
  * Groups flat forecast table rows into the API response shape per hierarchy group.
  */
-function groupForecastRows(rows) {
+function groupForecastRows(rows, breakdown) {
   const groups = new Map();
 
   for (const row of rows) {
-    const key = `${row.level}:${row.group_id}:${row.model_id ?? ""}:${row.variant_id ?? ""}`;
+    const key = `${row.level}:${row.group_id}:${row.segment ?? ""}:${row.model_id ?? ""}:${row.variant_id ?? ""}`;
 
     if (!groups.has(key)) {
       groups.set(key, {
         level: row.level,
         groupId: row.group_id,
         groupLabel: row.group_label,
+        segment: row.segment ?? null,
         modelId: row.model_id,
         variantId: row.variant_id,
+        seriesKey: breakdown === "segment" ? (row.segment ?? row.group_id) : row.group_id,
+        seriesLabel: breakdown === "segment" ? (row.segment ?? row.group_label) : row.group_label,
         method: row.model_method,
         validation: {
           mae: row.validation_mae === null ? null : Number(row.validation_mae),
@@ -41,7 +45,7 @@ function groupForecastRows(rows) {
   return [...groups.values()];
 }
 
-function groupActualRows(rows) {
+function groupActualRows(rows, breakdown) {
   const groups = new Map();
 
   for (const row of rows) {
@@ -52,6 +56,9 @@ function groupActualRows(rows) {
         level: row.level,
         groupId: row.group_id,
         groupLabel: row.group_label,
+        segment: row.segment ?? null,
+        seriesKey: breakdown === "segment" ? row.group_id : row.group_id,
+        seriesLabel: breakdown === "segment" ? row.group_label : row.group_label,
         actuals: []
       });
     }
@@ -65,7 +72,30 @@ function groupActualRows(rows) {
   return [...groups.values()];
 }
 
-async function findActualRows({ level, groupId, segment, modelId, variantId }) {
+function resolveGroupId(level, query) {
+  if (query.groupId) {
+    return query.groupId;
+  }
+
+  if (level === "zone") {
+    return query.zone || null;
+  }
+
+  if (level === "state") {
+    return query.state || null;
+  }
+
+  return query.dealerId || null;
+}
+
+function buildCacheKey(runId, filters) {
+  return JSON.stringify({
+    runId,
+    ...filters
+  });
+}
+
+async function findActualRows({ level, groupId, segment, modelId, variantId, breakdown }) {
   const levelColumns = {
     dealer: {
       id: "d.dealer_id",
@@ -85,6 +115,11 @@ async function findActualRows({ level, groupId, segment, modelId, variantId }) {
   const config = levelColumns[resolvedLevel];
   const values = [];
   const conditions = [];
+  const outputId = breakdown === "segment" ? "vm.segment" : config.id;
+  const outputLabel = breakdown === "segment" ? "vm.segment" : config.label;
+  const outputSegment = breakdown === "segment" ? "vm.segment" : "NULL::VARCHAR(40)";
+  const groupByColumns =
+    breakdown === "segment" ? "vm.segment, m.month" : `${config.id}, ${config.label}, m.month`;
 
   if (groupId) {
     values.push(groupId);
@@ -111,16 +146,17 @@ async function findActualRows({ level, groupId, segment, modelId, variantId }) {
     `
       SELECT
         $1::VARCHAR AS level,
-        ${config.id} AS group_id,
-        ${config.label} AS group_label,
+        ${outputId} AS group_id,
+        ${outputLabel} AS group_label,
+        ${outputSegment} AS segment,
         TO_CHAR(m.month, 'YYYY-MM-01') AS month,
         SUM(m.units_sold)::INTEGER AS units_sold
       FROM monthly_sales_data m
       JOIN dealers d ON d.dealer_id = m.dealer_id
       JOIN vehicle_models vm ON vm.model_id = m.model_id
       ${where}
-      GROUP BY ${config.id}, ${config.label}, m.month
-      ORDER BY ${config.label}, m.month
+      GROUP BY ${groupByColumns}
+      ORDER BY ${outputLabel}, m.month
     `,
     [resolvedLevel, ...values]
   );
@@ -133,10 +169,11 @@ async function findActualRows({ level, groupId, segment, modelId, variantId }) {
  */
 router.get("/baseline", async (request, response) => {
   const level = request.query.level;
-  const groupId = request.query.groupId || request.query.dealerId;
+  const groupId = resolveGroupId(level, request.query);
   const segment = request.query.segment;
   const modelId = request.query.modelId || request.query.ModelId;
   const variantId = request.query.variantId || request.query.VariantId;
+  const breakdown = request.query.breakdown;
 
   if (level && !allowedLevels.has(level)) {
     response.status(400).json({
@@ -157,28 +194,42 @@ router.get("/baseline", async (request, response) => {
       return;
     }
 
+    const filters = {
+      level: level || "all",
+      groupId: groupId || null,
+      segment: segment || null,
+      modelId: modelId || null,
+      variantId: variantId || null,
+      breakdown: breakdown || null
+    };
+    const cacheKey = buildCacheKey(latestRun.run_id, filters);
+    const cachedPayload = ForecastCacheService.get(cacheKey);
+
+    if (cachedPayload) {
+      response.json(cachedPayload);
+      return;
+    }
+
     const rows = await ForecastData.findLatest({
       level,
       groupId,
       segment,
       modelId,
-      variantId
+      variantId,
+      breakdown
     });
 
-    response.json({
+    const payload = {
       ok: true,
       runId: latestRun.run_id,
       horizon: latestRun.horizon_months,
       completedAt: latestRun.completed_at,
-      filters: {
-        level: level || "all",
-        groupId: groupId || null,
-        segment: segment || null,
-        modelId: modelId || null,
-        variantId: variantId || null
-      },
-      series: groupForecastRows(rows)
-    });
+      filters,
+      series: groupForecastRows(rows, breakdown)
+    };
+
+    ForecastCacheService.set(cacheKey, payload);
+    response.json(payload);
   } catch (error) {
     response.status(500).json({
       ok: false,
@@ -189,10 +240,11 @@ router.get("/baseline", async (request, response) => {
 
 router.get("/actuals", async (request, response) => {
   const level = request.query.level;
-  const groupId = request.query.groupId || request.query.dealerId;
+  const groupId = resolveGroupId(level, request.query);
   const segment = request.query.segment;
   const modelId = request.query.modelId || request.query.ModelId;
   const variantId = request.query.variantId || request.query.VariantId;
+  const breakdown = request.query.breakdown;
 
   if (level && !allowedLevels.has(level)) {
     response.status(400).json({
@@ -208,7 +260,8 @@ router.get("/actuals", async (request, response) => {
       groupId,
       segment,
       modelId,
-      variantId
+      variantId,
+      breakdown
     });
 
     response.json({
@@ -218,9 +271,10 @@ router.get("/actuals", async (request, response) => {
         groupId: groupId || null,
         segment: segment || null,
         modelId: modelId || null,
-        variantId: variantId || null
+        variantId: variantId || null,
+        breakdown: breakdown || null
       },
-      series: groupActualRows(rows)
+      series: groupActualRows(rows, breakdown)
     });
   } catch (error) {
     response.status(500).json({

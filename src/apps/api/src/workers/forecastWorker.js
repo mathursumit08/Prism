@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { pool } from "../db.js";
 import { buildBaselineForecast } from "../forecasting/baselineForecast.js";
 import { ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
+import { ForecastCacheService } from "../services/forecastCacheService.js";
 
 dotenv.config();
 
@@ -19,6 +20,7 @@ function buildForecastKey({
   forecastType,
   level,
   groupId,
+  segment,
   modelId,
   variantId,
   forecastMonth
@@ -27,6 +29,7 @@ function buildForecastKey({
     forecastType,
     level,
     groupId,
+    segment ?? "",
     modelId ?? "",
     variantId ?? "",
     forecastMonth
@@ -189,21 +192,43 @@ function nextMidnightDelay(now = new Date()) {
  * Builds all forecast scopes: overall, model-level, and variant-level forecasts.
  */
 async function fetchForecastScopes(db = pool) {
-  const result = await db.query(`
-    SELECT DISTINCT model_id, NULL::VARCHAR(16) AS variant_id
-    FROM monthly_sales_data
-    UNION
-    SELECT DISTINCT model_id, variant_id
-    FROM monthly_sales_data
-    ORDER BY model_id, variant_id NULLS FIRST
-  `);
+  const [segmentsResult, modelsResult, variantsResult] = await Promise.all([
+    db.query(`
+      SELECT DISTINCT segment
+      FROM vehicle_models
+      ORDER BY segment
+    `),
+    db.query(`
+      SELECT model_id, segment
+      FROM vehicle_models
+      ORDER BY segment, model_id
+    `),
+    db.query(`
+      SELECT vv.model_id, vv.variant_id, vm.segment
+      FROM vehicle_variants vv
+      JOIN vehicle_models vm ON vm.model_id = vv.model_id
+      ORDER BY vm.segment, vv.model_id, vv.variant_id
+    `)
+  ]);
 
   return [
     {
+      segment: null,
       modelId: null,
       variantId: null
     },
-    ...result.rows.map((row) => ({
+    ...segmentsResult.rows.map((row) => ({
+      segment: row.segment,
+      modelId: null,
+      variantId: null
+    })),
+    ...modelsResult.rows.map((row) => ({
+      segment: row.segment,
+      modelId: row.model_id,
+      variantId: null
+    })),
+    ...variantsResult.rows.map((row) => ({
+      segment: row.segment,
       modelId: row.model_id,
       variantId: row.variant_id
     }))
@@ -237,6 +262,7 @@ function flattenForecast({ runId, scope, forecast }) {
           level: series.level,
           groupId: series.groupId,
           groupLabel: series.groupLabel,
+          segment: scope.segment,
           modelId: scope.modelId,
           variantId: scope.variantId,
           forecastMonth: point.month,
@@ -276,6 +302,7 @@ async function removeIrrelevantRows(records, db) {
         forecastType: record.forecastType,
         level: record.level,
         groupId: record.groupId,
+        segment: record.segment,
         modelId: record.modelId,
         variantId: record.variantId,
         forecastMonth: record.forecastMonth
@@ -291,6 +318,7 @@ async function removeIrrelevantRows(records, db) {
             forecastType: row.forecast_type,
             level: row.level,
             groupId: row.group_id,
+            segment: row.segment,
             modelId: row.model_id,
             variantId: row.variant_id,
             forecastMonth: row.forecast_month
@@ -368,6 +396,7 @@ export async function runForecastWorker({
       const dealerForecast = await buildBaselineForecast({
         level: "dealer",
         horizon,
+        segment: scope.segment,
         modelId: scope.modelId,
         variantId: scope.variantId
       });
@@ -406,6 +435,7 @@ export async function runForecastWorker({
     const removed = await removeIrrelevantRows(allRecords, client);
     const completedRun = await ForecastRun.complete(run.run_id, client);
     await client.query("COMMIT");
+    ForecastCacheService.clear();
     reportProgress(onProgress, {
       runId: completedRun.run_id,
       stage: "finished",

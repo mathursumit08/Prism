@@ -491,6 +491,13 @@ function fitBaseline(values, horizon) {
 async function fetchDealerRows(filters) {
   const conditions = [];
   const values = [];
+  let vehicleModelJoin = "";
+
+  if (filters.segment) {
+    vehicleModelJoin = "JOIN vehicle_models vm ON vm.model_id = m.model_id";
+    values.push(filters.segment);
+    conditions.push(`vm.segment = $${values.length}`);
+  }
 
   if (filters.modelId) {
     values.push(filters.modelId);
@@ -515,6 +522,7 @@ async function fetchDealerRows(filters) {
         SUM(m.units_sold)::INTEGER AS units_sold
       FROM monthly_sales_data m
       JOIN dealers d ON d.dealer_id = m.dealer_id
+      ${vehicleModelJoin}
       ${where}
       GROUP BY d.dealer_id, d.dealer_name, d.state, d.region, m.month
       ORDER BY d.dealer_id, m.month
@@ -639,7 +647,7 @@ function aggregateFromDealers(dealerSeries, level) {
 /**
  * Public entry point for producing dealerwise, statewise, zonewise, or all forecasts.
  */
-export async function buildBaselineForecast({ level = "all", horizon, modelId, variantId } = {}) {
+export async function buildBaselineForecast({ level = "all", horizon, segment, modelId, variantId } = {}) {
   const safeHorizon = clampHorizon(horizon);
   const requestedLevels = level === "all" ? Object.keys(LEVELS) : [level];
 
@@ -650,6 +658,7 @@ export async function buildBaselineForecast({ level = "all", horizon, modelId, v
   }
 
   const filters = {
+    segment,
     modelId,
     variantId
   };
