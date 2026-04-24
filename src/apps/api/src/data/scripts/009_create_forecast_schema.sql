@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS forecast_runs (
   forecast_type VARCHAR(32) NOT NULL DEFAULT 'baseline',
   status VARCHAR(24) NOT NULL DEFAULT 'running',
   horizon_months INTEGER NOT NULL CHECK (horizon_months BETWEEN 1 AND 24),
-  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   completed_at TIMESTAMPTZ,
   error_message TEXT
 );
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS forecast_data (
   validation_mae NUMERIC(12, 2),
   validation_rmse NUMERIC(12, 2),
   validation_mape NUMERIC(12, 2),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { ForecastData, ForecastRun } from "../data/models/index.js";
+import { ForecastAdminService } from "../services/forecastAdminService.js";
 import { pool } from "../db.js";
 
 const router = Router();
@@ -223,6 +224,59 @@ router.get("/actuals", async (request, response) => {
     });
   } catch (error) {
     response.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+router.get("/admin/status", async (_request, response) => {
+  try {
+    const status = await ForecastAdminService.getStatus();
+    response.json({
+      ok: true,
+      ...status
+    });
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+router.post("/admin/clear", async (_request, response) => {
+  try {
+    const deletedRows = await ForecastAdminService.clearForecastData();
+    const status = await ForecastAdminService.getStatus();
+
+    response.json({
+      ok: true,
+      deletedRows,
+      ...status
+    });
+  } catch (error) {
+    const statusCode = error.code === "RUN_IN_PROGRESS" ? 409 : 500;
+    response.status(statusCode).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+router.post("/admin/regenerate", async (request, response) => {
+  try {
+    const generation = await ForecastAdminService.regenerateForecast({
+      horizon: request.body?.horizon
+    });
+
+    response.status(202).json({
+      ok: true,
+      generation
+    });
+  } catch (error) {
+    const statusCode = error.code === "INVALID_HORIZON" ? 400 : error.code === "RUN_IN_PROGRESS" ? 409 : 500;
+    response.status(statusCode).json({
       ok: false,
       error: error.message
     });

@@ -7,8 +7,8 @@ export const ForecastRun = {
   async create({ forecastType = "baseline", horizonMonths }, db = pool) {
     const result = await db.query(
       `
-        INSERT INTO forecast_runs (forecast_type, horizon_months)
-        VALUES ($1, $2)
+        INSERT INTO forecast_runs (forecast_type, horizon_months, started_at)
+        VALUES ($1, $2, clock_timestamp())
         RETURNING *
       `,
       [forecastType, horizonMonths]
@@ -24,7 +24,7 @@ export const ForecastRun = {
     const result = await db.query(
       `
         UPDATE forecast_runs
-        SET status = 'completed', completed_at = NOW(), error_message = NULL
+        SET status = 'completed', completed_at = clock_timestamp(), error_message = NULL
         WHERE run_id = $1
         RETURNING *
       `,
@@ -41,7 +41,7 @@ export const ForecastRun = {
     const result = await db.query(
       `
         UPDATE forecast_runs
-        SET status = 'failed', completed_at = NOW(), error_message = $2
+        SET status = 'failed', completed_at = clock_timestamp(), error_message = $2
         WHERE run_id = $1
         RETURNING *
       `,
@@ -62,6 +62,43 @@ export const ForecastRun = {
         WHERE forecast_type = $1
           AND status = 'completed'
         ORDER BY completed_at DESC
+        LIMIT 1
+      `,
+      [forecastType]
+    );
+
+    return result.rows[0] ?? null;
+  },
+
+  /**
+   * Returns the newest run regardless of status for the requested forecast type.
+   */
+  async findLatest({ forecastType = "baseline" } = {}, db = pool) {
+    const result = await db.query(
+      `
+        SELECT *
+        FROM forecast_runs
+        WHERE forecast_type = $1
+        ORDER BY started_at DESC
+        LIMIT 1
+      `,
+      [forecastType]
+    );
+
+    return result.rows[0] ?? null;
+  },
+
+  /**
+   * Returns the newest failed run for the requested forecast type.
+   */
+  async findLatestFailed({ forecastType = "baseline" } = {}, db = pool) {
+    const result = await db.query(
+      `
+        SELECT *
+        FROM forecast_runs
+        WHERE forecast_type = $1
+          AND status = 'failed'
+        ORDER BY completed_at DESC NULLS LAST, started_at DESC
         LIMIT 1
       `,
       [forecastType]

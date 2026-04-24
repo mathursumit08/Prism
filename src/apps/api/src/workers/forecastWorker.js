@@ -170,6 +170,12 @@ function parseHorizon(value) {
   return Math.min(Math.max(Math.trunc(parsed), 1), 24);
 }
 
+function reportProgress(onProgress, progress) {
+  if (typeof onProgress === "function") {
+    onProgress(progress);
+  }
+}
+
 /**
  * Calculates the delay from now until the next local 12:00 AM boundary.
  */
@@ -299,16 +305,31 @@ async function removeIrrelevantRows(records, db) {
 /**
  * Runs one complete forecast generation cycle and stores the results in Postgres.
  */
-export async function runForecastWorker({ horizon = parseHorizon(process.env.FORECAST_HORIZON_MONTHS) } = {}) {
+export async function runForecastWorker({
+  horizon = parseHorizon(process.env.FORECAST_HORIZON_MONTHS),
+  onProgress
+} = {}) {
   const client = await pool.connect();
   let run = null;
 
-  console.log(`Forecast worker started with horizon ${horizon} month(s)`);
+  reportProgress(onProgress, {
+    stage: "initializing",
+    stageLabel: "Initializing",
+    message: `Preparing ${horizon}-month forecast regeneration.`,
+    horizon
+  });
 
   try {
     const lockResult = await client.query("SELECT pg_try_advisory_lock($1) AS locked", [workerLockId]);
     if (!lockResult.rows[0]?.locked) {
       console.log("Forecast worker skipped because another run is already active");
+      reportProgress(onProgress, {
+        running: false,
+        stage: "failed",
+        stageLabel: "Failed",
+        message: "Another forecast generation is already active.",
+        error: "Another forecast generation is already active."
+      });
       return {
         skipped: true,
         reason: "lock-not-acquired"
@@ -324,12 +345,26 @@ export async function runForecastWorker({ horizon = parseHorizon(process.env.FOR
       },
       client
     );
+    reportProgress(onProgress, {
+      stage: "loading-source-data",
+      stageLabel: "Loading source data",
+      message: "Loading monthly sales history and event rules.",
+      runId: run.run_id
+    });
 
     const scopes = await fetchForecastScopes(client);
     const eventCalendar = await fetchEventCalendar(client);
     const allRecords = [];
+    reportProgress(onProgress, {
+      stage: "processing",
+      stageLabel: "Processing",
+      message: `Generating forecast scopes (0/${scopes.length}).`,
+      runId: run.run_id,
+      totalScopes: scopes.length,
+      processedScopes: 0
+    });
 
-    for (const scope of scopes) {
+    for (const [index, scope] of scopes.entries()) {
       const dealerForecast = await buildBaselineForecast({
         level: "dealer",
         horizon,
@@ -348,12 +383,39 @@ export async function runForecastWorker({ horizon = parseHorizon(process.env.FOR
           forecast: adjustedForecast
         })
       );
+
+      reportProgress(onProgress, {
+        stage: "processing",
+        stageLabel: "Processing",
+        message: `Generating forecast scopes (${index + 1}/${scopes.length}).`,
+        runId: run.run_id,
+        totalScopes: scopes.length,
+        processedScopes: index + 1
+      });
     }
 
+    reportProgress(onProgress, {
+      stage: "saving-results",
+      stageLabel: "Saving forecast rows",
+      message: "Saving generated forecast data.",
+      runId: run.run_id,
+      totalScopes: scopes.length,
+      processedScopes: scopes.length
+    });
     const inserted = await insertInBatches(allRecords, client);
     const removed = await removeIrrelevantRows(allRecords, client);
     const completedRun = await ForecastRun.complete(run.run_id, client);
     await client.query("COMMIT");
+    reportProgress(onProgress, {
+      runId: completedRun.run_id,
+      stage: "finished",
+      stageLabel: "Finished successfully",
+      message: "Forecast regeneration finished successfully.",
+      inserted,
+      removed,
+      totalScopes: scopes.length,
+      processedScopes: scopes.length
+    });
 
     console.log(
       `Forecast worker completed run ${completedRun.run_id}: ${inserted} upserted rows, ${removed} removed rows across ${scopes.length} scopes`
@@ -372,6 +434,13 @@ export async function runForecastWorker({ horizon = parseHorizon(process.env.FOR
     if (run) {
       await ForecastRun.fail(run.run_id, error.message);
     }
+    reportProgress(onProgress, {
+      runId: run?.run_id ?? null,
+      stage: "failed",
+      stageLabel: "Failed",
+      message: error.message || "Forecast worker failed.",
+      error: error.message || "Forecast worker failed."
+    });
     console.error("Forecast worker failed", error);
     throw error;
   } finally {

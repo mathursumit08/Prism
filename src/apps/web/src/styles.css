@@ -33,6 +33,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 main {
   min-height: 100vh;
   padding: 28px;
@@ -316,6 +321,241 @@ select:disabled {
   background: #fff0ed;
 }
 
+.page-success {
+  max-width: 1220px;
+  margin: 20px auto 0;
+  padding: 12px 14px;
+  border-left: 5px solid #00796b;
+  color: #184640;
+  background: #ebfaf7;
+}
+
+.admin-header-copy {
+  max-width: 58ch;
+  margin: 18px 0 0;
+  color: #4d4d4d;
+  font-size: 1.05rem;
+}
+
+.admin-hero-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  min-height: 220px;
+  padding: 32px;
+  border-radius: 8px;
+  background:
+    linear-gradient(140deg, #0d3b38, #176b63);
+  color: #ffffff;
+}
+
+.dashboard-header > .admin-hero-card {
+  border-left: 0;
+  background:
+    linear-gradient(140deg, #0d3b38, #176b63);
+}
+
+.admin-hero-card strong {
+  font-size: clamp(1.4rem, 3vw, 2.2rem);
+  line-height: 1.1;
+}
+
+.admin-hero-card p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.status-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.status-badge.healthy {
+  color: #0d3b38;
+  background: #d8f5ee;
+}
+
+.status-badge.running {
+  color: #3c2900;
+  background: #ffe59a;
+}
+
+.status-badge.failed {
+  color: #621c12;
+  background: #ffd0c8;
+}
+
+.admin-actions-panel,
+.forecast-panel,
+.data-table {
+  max-width: 1220px;
+  margin: 20px auto 0;
+  padding: 24px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.admin-actions-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) repeat(3, minmax(180px, 1fr));
+  gap: 16px;
+  align-items: end;
+}
+
+.admin-actions-row label {
+  color: #202020;
+}
+
+.admin-actions-row select {
+  border: 2px solid #c7d3d0;
+}
+
+.secondary-button {
+  color: #202020;
+  background: #ebebeb;
+}
+
+.danger-button {
+  background: #b23425;
+}
+
+.status-strip {
+  padding: 18px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  background: #fbfbfb;
+}
+
+.status-strip strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 1.15rem;
+}
+
+.status-strip p {
+  margin: 0 0 8px;
+  color: #555555;
+}
+
+.status-error {
+  color: #8b2e20;
+  font-weight: 700;
+}
+
+.progress-steps {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.progress-step {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid #dfdfdf;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.progress-step span {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #8c8c8c;
+  font-weight: 800;
+}
+
+.progress-step strong {
+  font-size: 0.98rem;
+}
+
+.progress-step.done span,
+.progress-step.active span {
+  background: #00796b;
+}
+
+.progress-step.active {
+  border-color: #00796b;
+  background: #f1fbf8;
+}
+
+.progress-step.failed span {
+  background: #b23425;
+}
+
+.progress-step.failed.active {
+  border-color: #b23425;
+  background: #fff2ef;
+}
+
+.admin-detail-list {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-detail-list div {
+  padding: 14px 0;
+  border-bottom: 1px solid #ececec;
+}
+
+.admin-detail-list div:last-child {
+  border-bottom: 0;
+}
+
+.admin-detail-list span {
+  display: block;
+  margin-bottom: 8px;
+  color: #666666;
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-detail-list strong {
+  display: block;
+  color: #202020;
+  font-size: 1rem;
+}
+
+.admin-detail-list p {
+  margin: 8px 0 0;
+  color: #555555;
+}
+
+.event-rule-list {
+  display: grid;
+  gap: 12px;
+}
+
+.event-rule {
+  padding: 14px;
+  border-radius: 8px;
+  background: #f7f7f7;
+}
+
+.event-rule strong,
+.event-rule span {
+  display: block;
+}
+
+.event-rule strong {
+  margin-bottom: 6px;
+}
+
+.event-rule span {
+  color: #555555;
+}
+
 .chart-wrap {
   overflow-x: auto;
   border: 1px solid #dedede;
@@ -483,6 +723,7 @@ tbody tr:last-child td {
   .home-grid,
   .controls-row,
   .controls-row-products,
+  .admin-actions-row,
   .analytics-grid,
   .summary-grid {
     grid-template-columns: 1fr;

@@ -111,6 +111,37 @@ export const ForecastData = {
   },
 
   /**
+   * Returns the number of stored forecast rows for a forecast type.
+   */
+  async countByForecastType(forecastType = "baseline", db = pool) {
+    const result = await db.query(
+      `
+        SELECT COUNT(*)::INTEGER AS count
+        FROM forecast_data
+        WHERE forecast_type = $1
+      `,
+      [forecastType]
+    );
+
+    return result.rows[0]?.count ?? 0;
+  },
+
+  /**
+   * Removes all stored forecast rows for a forecast type.
+   */
+  async clearByForecastType(forecastType = "baseline", db = pool) {
+    const result = await db.query(
+      `
+        DELETE FROM forecast_data
+        WHERE forecast_type = $1
+      `,
+      [forecastType]
+    );
+
+    return result.rowCount;
+  },
+
+  /**
    * Reads forecast rows from the latest completed run with optional hierarchy filters.
    */
   async findLatest({ level, groupId, segment, modelId, variantId, forecastType = "baseline" }, db = pool) {
