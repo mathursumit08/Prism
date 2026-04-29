@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-
-const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:4000";
+import { useAuth } from "../auth/AuthContext.jsx";
 const forecastHorizons = [6, 12, 24];
 
 function formatUnits(value) {
@@ -66,6 +65,7 @@ function parseTimestampToNanoseconds(value) {
 }
 
 export default function AdminPage() {
+  const { apiFetch } = useAuth();
   const [selectedHorizon, setSelectedHorizon] = useState(6);
   const [adminState, setAdminState] = useState({
     loading: true,
@@ -84,7 +84,7 @@ export default function AdminPage() {
 
     async function loadStatus() {
       try {
-        const response = await fetch(`${apiUrl}/api/forecasts/admin/status`);
+        const response = await apiFetch("/api/v1/forecasts/admin/status");
         const payload = await response.json();
 
         if (!response.ok) {
@@ -120,7 +120,7 @@ export default function AdminPage() {
       isMounted = false;
       window.clearInterval(intervalId);
     };
-  }, [adminState.data?.generation?.running]);
+  }, [adminState.data?.generation?.running, apiFetch]);
 
   async function refreshStatus() {
     setAdminState((current) => ({
@@ -130,7 +130,7 @@ export default function AdminPage() {
     }));
 
     try {
-      const response = await fetch(`${apiUrl}/api/forecasts/admin/status`);
+      const response = await apiFetch("/api/v1/forecasts/admin/status");
       const payload = await response.json();
 
       if (!response.ok) {
@@ -164,7 +164,7 @@ export default function AdminPage() {
     });
 
     try {
-      const response = await fetch(`${apiUrl}/api/forecasts/admin/clear`, {
+      const response = await apiFetch("/api/v1/forecasts/admin/clear", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -203,7 +203,7 @@ export default function AdminPage() {
     });
 
     try {
-      const response = await fetch(`${apiUrl}/api/forecasts/admin/regenerate`, {
+      const response = await apiFetch("/api/v1/forecasts/admin/regenerate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

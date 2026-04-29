@@ -1,17 +1,41 @@
 import { Router } from "express";
 import { Dealer, VehicleModel, VehicleVariant } from "../data/models/index.js";
+import { authenticate } from "../middleware/authenticate.js";
+import { requirePermission } from "../middleware/requirePermission.js";
+import { getScope, permissions } from "../auth/accessControl.js";
 
 const router = Router();
 
+router.use(authenticate);
+
 router.get("/dealers", async (request, response) => {
   try {
+    const scope = getScope(request.user);
+    const filters = {
+      city: request.query.city,
+      dealerType: request.query.dealerType,
+      region: request.query.region,
+      state: request.query.state
+    };
+
+    if (!request.user.permissions.includes(permissions.viewForecast)) {
+      response.status(403).json({
+        ok: false,
+        error: "You do not have permission to view forecast data"
+      });
+      return;
+    }
+
+    if (scope.kind === "region") {
+      filters.region = scope.region;
+    }
+
+    if (scope.kind === "dealer") {
+      filters.dealerId = scope.dealerId;
+    }
+
     const dealers = await Dealer.findAll({
-      filters: {
-        city: request.query.city,
-        dealerType: request.query.dealerType,
-        region: request.query.region,
-        state: request.query.state
-      },
+      filters,
       limit: request.query.limit || 1000,
       offset: request.query.offset || 0
     });
@@ -36,7 +60,7 @@ router.get("/dealers", async (request, response) => {
   }
 });
 
-router.get("/models", async (request, response) => {
+router.get("/models", requirePermission(permissions.viewForecast), async (request, response) => {
   try {
     const models = await VehicleModel.findAll({
       filters: {
@@ -65,7 +89,7 @@ router.get("/models", async (request, response) => {
   }
 });
 
-router.get("/variants", async (request, response) => {
+router.get("/variants", requirePermission(permissions.viewForecast), async (request, response) => {
   try {
     const variants = await VehicleVariant.findAll({
       filters: {

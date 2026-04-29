@@ -4,6 +4,7 @@ export const Dealer = createModel({
   tableName: "dealers",
   primaryKey: "dealer_id",
   allowedFilters: {
+    dealerId: "dealer_id",
     city: "city",
     dealerType: "dealer_type",
     region: "region",

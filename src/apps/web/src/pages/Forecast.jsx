@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-
-const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:4000";
+import { useAuth } from "../auth/AuthContext.jsx";
 
 const forecastLevels = [
   { value: "zone", label: "Zone" },
@@ -373,7 +372,9 @@ function ContributionChart({ series, message = "Forecast contribution data will 
 }
 
 export default function ForecastPage() {
-  const [level, setLevel] = useState("zone");
+  const { apiFetch, user } = useAuth();
+  const availableLevels = forecastLevels.filter((option) => user.forecastLevels.includes(option.value));
+  const [level, setLevel] = useState(availableLevels[0]?.value || "dealer");
   const [dealerId, setDealerId] = useState("");
   const [stateId, setStateId] = useState("");
   const [zoneId, setZoneId] = useState("");
@@ -407,14 +408,20 @@ export default function ForecastPage() {
   });
 
   useEffect(() => {
+    if (availableLevels.length > 0 && !availableLevels.some((option) => option.value === level)) {
+      setLevel(availableLevels[0].value);
+    }
+  }, [availableLevels, level]);
+
+  useEffect(() => {
     const controller = new AbortController();
 
     async function fetchReferences() {
       try {
         const [dealersResponse, modelsResponse, variantsResponse] = await Promise.all([
-          fetch(`${apiUrl}/api/dealers`, { signal: controller.signal }),
-          fetch(`${apiUrl}/api/models`, { signal: controller.signal }),
-          fetch(`${apiUrl}/api/variants`, { signal: controller.signal })
+          apiFetch("/api/dealers", { signal: controller.signal }),
+          apiFetch("/api/models", { signal: controller.signal }),
+          apiFetch("/api/variants", { signal: controller.signal })
         ]);
 
         if (!dealersResponse.ok || !modelsResponse.ok || !variantsResponse.ok) {
@@ -451,7 +458,7 @@ export default function ForecastPage() {
 
     fetchReferences();
     return () => controller.abort();
-  }, []);
+  }, [apiFetch]);
 
   const dealers = referenceState.dealers;
   const models = referenceState.models;
@@ -544,10 +551,10 @@ export default function ForecastPage() {
         }
 
         const [forecastResponse, actualResponse] = await Promise.all([
-          fetch(`${apiUrl}/api/forecasts/baseline?${params}`, {
+          apiFetch(`/api/v1/forecasts/baseline?${params}`, {
             signal: controller.signal
           }),
-          fetch(`${apiUrl}/api/forecasts/actuals?${params}`, {
+          apiFetch(`/api/v1/forecasts/actuals?${params}`, {
             signal: controller.signal
           })
         ]);
@@ -601,7 +608,7 @@ export default function ForecastPage() {
     loadForecastAndActuals();
 
     return () => controller.abort();
-  }, [level, groupId, segment, modelId, variantId]);
+  }, [apiFetch, level, groupId, segment, modelId, variantId]);
 
   useEffect(() => {
     if (!shouldLoadBreakdown) {
@@ -632,7 +639,7 @@ export default function ForecastPage() {
           params.set("segment", segment);
         }
 
-        const response = await fetch(`${apiUrl}/api/forecasts/baseline?${params}`, {
+        const response = await apiFetch(`/api/v1/forecasts/baseline?${params}`, {
           signal: controller.signal
         });
 
@@ -670,7 +677,7 @@ export default function ForecastPage() {
     loadSegmentBreakdown();
 
     return () => controller.abort();
-  }, [groupId, level, segment, shouldLoadBreakdown]);
+  }, [apiFetch, groupId, level, segment, shouldLoadBreakdown]);
 
   const visibleSeries = useMemo(
     () => limitSeriesMonths(forecastState.series, horizonMonths),
@@ -722,7 +729,7 @@ export default function ForecastPage() {
           <label>
             Forecast level
             <select value={level} onChange={(event) => setLevel(event.target.value)}>
-              {forecastLevels.map((option) => (
+              {availableLevels.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -875,7 +882,7 @@ export default function ForecastPage() {
         <article className="metric">
           <span>Leading {leadingEntityLabels[level] || "group"}</span>
           <strong>{hasForecastData ? getSeriesLabel(summary.leader) : "No data"}</strong>
-          <p>{forecastLevels.find((item) => item.value === level)?.label}</p>
+          <p>{availableLevels.find((item) => item.value === level)?.label}</p>
         </article>
         <article className="metric">
           <span>Leading segment</span>
@@ -932,7 +939,7 @@ export default function ForecastPage() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Forecast graph</p>
-            <h2>Monthly units by {forecastLevels.find((item) => item.value === level)?.label.toLowerCase()}</h2>
+            <h2>Monthly units by {availableLevels.find((item) => item.value === level)?.label.toLowerCase()}</h2>
           </div>
           <span className={hasForecastData ? "source-pill live" : "source-pill"}>
             {forecastState.loading ? "Loading" : hasForecastData ? "Live API" : "No data"}
@@ -1047,7 +1054,7 @@ export default function ForecastPage() {
             <table>
               <thead>
                 <tr>
-                  <th>{forecastLevels.find((item) => item.value === level)?.label}</th>
+                  <th>{availableLevels.find((item) => item.value === level)?.label}</th>
                   {visibleSeries[0]?.forecast.map((point) => (
                     <th key={point.month}>{formatMonth(point.month)}</th>
                   ))}
