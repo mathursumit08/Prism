@@ -148,7 +148,10 @@ export const ForecastData = {
   /**
    * Reads forecast rows from the latest completed run with optional hierarchy filters.
    */
-  async findLatest({ level, groupId, segment, modelId, variantId, breakdown, forecastType = "baseline" }, db = pool) {
+  async findLatest(
+    { level, groupId, segment, modelId, variantId, breakdown, forecastType = "baseline", scope },
+    db = pool
+  ) {
     const latestRunId = await findLatestCompletedRunId(forecastType, db);
 
     if (!latestRunId) {
@@ -162,24 +165,26 @@ export const ForecastData = {
           level,
           groupId,
           segment,
-          forecastType
+          forecastType,
+          scope
         },
         db
       );
     }
 
     return findLatestExactRows(
-      {
-        latestRunId,
-        level,
-        groupId,
-        segment,
-        modelId,
-        variantId,
-        forecastType
-      },
-      db
-    );
+        {
+          latestRunId,
+          level,
+          groupId,
+          segment,
+          modelId,
+          variantId,
+          forecastType,
+          scope
+        },
+        db
+      );
   }
 };
 
@@ -200,7 +205,7 @@ async function findLatestCompletedRunId(forecastType, db = pool) {
 }
 
 async function findLatestExactRows(
-  { latestRunId, level, groupId, segment, modelId, variantId, forecastType },
+  { latestRunId, level, groupId, segment, modelId, variantId, forecastType, scope },
   db = pool
 ) {
   const conditions = ["fd.forecast_type = $1"];
@@ -237,6 +242,8 @@ async function findLatestExactRows(
     conditions.push("fd.variant_id IS NULL");
   }
 
+  appendScopeCondition(conditions, values, scope);
+
   const result = await db.query(
     `
       SELECT
@@ -269,7 +276,7 @@ async function findLatestExactRows(
   return result.rows;
 }
 
-async function findLatestSegmentBreakdownRows({ latestRunId, level, groupId, segment, forecastType }, db = pool) {
+async function findLatestSegmentBreakdownRows({ latestRunId, level, groupId, segment, forecastType, scope }, db = pool) {
   const conditions = [
     "fd.forecast_type = $1",
     "fd.run_id = $2",
@@ -293,6 +300,8 @@ async function findLatestSegmentBreakdownRows({ latestRunId, level, groupId, seg
     values.push(segment);
     conditions.push(`fd.segment = $${values.length}`);
   }
+
+  appendScopeCondition(conditions, values, scope);
 
   const result = await db.query(
     `
@@ -323,4 +332,49 @@ async function findLatestSegmentBreakdownRows({ latestRunId, level, groupId, seg
   );
 
   return result.rows;
+}
+
+function appendScopeCondition(conditions, values, scope) {
+  if (!scope || scope.kind === "all") {
+    return;
+  }
+
+  if (scope.kind === "region") {
+    values.push(scope.region);
+    const parameter = `$${values.length}`;
+    conditions.push(`
+      EXISTS (
+        SELECT 1
+        FROM dealers d_scope
+        WHERE (
+          fd.level = 'zone'
+          AND d_scope.region = fd.group_id
+          AND d_scope.region = ${parameter}
+        ) OR (
+          fd.level = 'state'
+          AND d_scope.state = fd.group_id
+          AND d_scope.region = ${parameter}
+        ) OR (
+          fd.level = 'dealer'
+          AND d_scope.dealer_id = fd.group_id
+          AND d_scope.region = ${parameter}
+        )
+      )
+    `);
+    return;
+  }
+
+  if (scope.kind === "dealer") {
+    values.push(scope.dealerId);
+    const parameter = `$${values.length}`;
+    conditions.push("fd.level = 'dealer'");
+    conditions.push(`
+      EXISTS (
+        SELECT 1
+        FROM dealers d_scope
+        WHERE d_scope.dealer_id = fd.group_id
+          AND d_scope.dealer_id = ${parameter}
+      )
+    `);
+  }
 }

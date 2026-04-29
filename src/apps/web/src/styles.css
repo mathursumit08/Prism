@@ -15,10 +15,14 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background:
+    radial-gradient(circle at top right, rgba(0, 121, 107, 0.12), transparent 28%),
+    linear-gradient(180deg, #f7f7f2, #ece9df);
 }
 
 button,
-select {
+select,
+input {
   font: inherit;
 }
 
@@ -52,6 +56,94 @@ main {
   padding: 8px;
   border-radius: 8px;
   background: #ffffff;
+}
+
+.nav-spacer {
+  flex: 1 1 auto;
+}
+
+.nav-user {
+  color: #5a5a5a;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.nav-logout {
+  min-height: 40px;
+}
+
+.auth-shell {
+  display: grid;
+  min-height: 100vh;
+  padding: 28px;
+  place-items: center;
+}
+
+.login-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 420px);
+  gap: 24px;
+  width: min(980px, 100%);
+  padding: 24px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 48px rgba(37, 38, 30, 0.1);
+}
+
+.login-card-boot {
+  grid-template-columns: 1fr;
+  max-width: 560px;
+}
+
+.login-copy {
+  padding: 28px;
+  border-left: 7px solid #00796b;
+  background:
+    linear-gradient(135deg, rgba(247, 250, 249, 0.94), rgba(234, 239, 233, 0.96));
+}
+
+.login-copy p:not(.eyebrow) {
+  max-width: 48ch;
+  margin: 18px 0 0;
+  color: #535353;
+}
+
+.login-form {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  padding: 28px;
+}
+
+.login-form label {
+  color: #202020;
+}
+
+.login-form input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 2px solid #cfd7d5;
+  border-radius: 6px;
+  color: #202020;
+  background: #ffffff;
+}
+
+.login-hints {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 8px;
+  background: #f5f5ef;
+  color: #4d4d4d;
+}
+
+.login-hints strong {
+  color: #202020;
+}
+
+.login-notice {
+  margin: 0;
 }
 
 .top-nav a {
@@ -95,6 +187,10 @@ main {
   margin: 18px 0 24px;
   color: #4d4d4d;
   font-size: 1.08rem;
+}
+
+.home-user-meta {
+  margin-top: 0;
 }
 
 .home-grid img {
@@ -729,6 +825,7 @@ tbody tr:last-child td {
 
   .dashboard-header,
   .home-grid,
+  .login-card,
   .controls-row,
   .controls-row-products,
   .admin-actions-row,
@@ -739,6 +836,11 @@ tbody tr:last-child td {
 
   .home-copy {
     min-height: auto;
+    padding: 24px;
+  }
+
+  .login-copy,
+  .login-form {
     padding: 24px;
   }
 
@@ -764,6 +866,10 @@ tbody tr:last-child td {
 
 @media (max-width: 520px) {
   main {
+    padding: 12px;
+  }
+
+  .auth-shell {
     padding: 12px;
   }
 

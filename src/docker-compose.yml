@@ -10,6 +10,12 @@ services:
       PORT: 4000
       CLIENT_ORIGIN: http://localhost:5173
       DATABASE_URL: postgresql://postgres:Vectordbm1@postgres:5432/monorepo_db
+      JWT_ACCESS_SECRET: prism-docker-access-secret-change-me
+      JWT_REFRESH_SECRET: prism-docker-refresh-secret-change-me
+      JWT_ACCESS_TTL_SECONDS: 900
+      JWT_REFRESH_TTL_SECONDS: 604800
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_COOKIE_SAME_SITE: lax
     ports:
       - "4000:4000"
     depends_on:

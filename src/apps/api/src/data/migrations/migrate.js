@@ -49,7 +49,6 @@ async function run() {
   } finally {
     await client.query("SELECT pg_advisory_unlock($1)", [migrationLockId]).catch(() => {});
     client.release();
-    await pool.end();
   }
 }
 
