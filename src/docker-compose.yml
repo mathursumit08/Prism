@@ -12,6 +12,7 @@ services:
       PORT: 4000
       CLIENT_ORIGIN: http://localhost:5173
       DATABASE_URL: postgresql://postgres:Vectordbm1@postgres:5432/monorepo_db
+      FORECAST_SPARSE_DEALER_MONTH_THRESHOLD: 6
       JWT_ACCESS_SECRET: prism-docker-access-secret-change-me
       JWT_REFRESH_SECRET: prism-docker-refresh-secret-change-me
       JWT_ACCESS_TTL_SECONDS: 900
@@ -37,6 +38,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://postgres:Vectordbm1@postgres:5432/monorepo_db
       FORECAST_HORIZON_MONTHS: 24
+      FORECAST_SPARSE_DEALER_MONTH_THRESHOLD: 6
       TZ: Asia/Kolkata
     depends_on:
       postgres:
