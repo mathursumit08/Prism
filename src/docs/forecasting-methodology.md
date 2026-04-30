@@ -135,7 +135,10 @@ absolute residual by horizon month.
 The 80% and 95% interval half-widths are empirical residual quantiles for each
 horizon month. Because forecast uncertainty should not shrink simply due to
 sparse samples at later horizons, the worker enforces non-decreasing
-half-widths across the horizon. Sparse series fall back to a conservative
+half-widths across the horizon. After the initial quantile calculation, the
+worker adjusts the half-widths against the rolling hold-out residual samples
+until observed 80% and 95% coverage are within +/-2 percentage points of their
+nominal targets when possible. Sparse series fall back to a conservative
 moving-average band.
 
 Intervals are clipped at zero because vehicle unit demand cannot be negative.
@@ -151,6 +154,10 @@ returned by `/api/v1/forecasts/admin/status`:
 - calibration sample count
 - average 80% and 95% interval width
 - width by horizon month
+
+If the final run-level 80% or 95% calibration coverage is outside the +/-2%
+tolerance, the worker fails the forecast run instead of publishing intervals
+that do not meet the calibration acceptance criterion.
 
 ## Event Uplifts
 

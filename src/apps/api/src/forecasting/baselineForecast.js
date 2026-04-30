@@ -15,6 +15,8 @@ const LEVELS = {
 const DEFAULT_HORIZON = 6;
 const MAX_HORIZON = 24;
 const MIN_SERIES_LENGTH = 4;
+const CALIBRATION_TOLERANCE_PERCENTAGE_POINTS = 2;
+const CALIBRATION_ADJUSTMENT_STEPS = 40;
 
 /**
  * Normalizes a requested forecast horizon into the supported 1-24 month range.
@@ -148,6 +150,99 @@ function enforceNonDecreasing(values) {
     previous = next;
     return next;
   });
+}
+
+function calculateCoverage(residualsByHorizon, residual80, residual95) {
+  let covered80 = 0;
+  let covered95 = 0;
+  let sampleCount = 0;
+
+  residualsByHorizon.forEach((residuals, horizonIndex) => {
+    residuals.forEach((residual) => {
+      if (residual <= residual80[horizonIndex]) {
+        covered80 += 1;
+      }
+
+      if (residual <= residual95[horizonIndex]) {
+        covered95 += 1;
+      }
+
+      sampleCount += 1;
+    });
+  });
+
+  return {
+    coverage80: sampleCount > 0 ? Number(((covered80 / sampleCount) * 100).toFixed(2)) : null,
+    coverage95: sampleCount > 0 ? Number(((covered95 / sampleCount) * 100).toFixed(2)) : null,
+    sampleCount
+  };
+}
+
+function isWithinCoverageTolerance(value, target) {
+  return value !== null && Math.abs(value - target) <= CALIBRATION_TOLERANCE_PERCENTAGE_POINTS;
+}
+
+function scaleResiduals(values, factor, minimums = []) {
+  return enforceNonDecreasing(
+    values.map((value, index) => Math.max(value * factor, minimums[index] ?? 0))
+  );
+}
+
+function chooseAdjustedResiduals(residualsByHorizon, baseResiduals, target, coverageKey, minimums = []) {
+  const currentCoverage = (residuals) =>
+    calculateCoverage(residualsByHorizon, residuals, residuals)[coverageKey];
+  const initialCoverage = currentCoverage(baseResiduals);
+
+  if (isWithinCoverageTolerance(initialCoverage, target)) {
+    return baseResiduals;
+  }
+
+  const isUnderCovered = initialCoverage === null || initialCoverage < target - CALIBRATION_TOLERANCE_PERCENTAGE_POINTS;
+  let low = isUnderCovered ? 1 : 0;
+  let high = isUnderCovered ? 2 : 1;
+  let bestResiduals = baseResiduals;
+  let bestDistance = initialCoverage === null ? Number.POSITIVE_INFINITY : Math.abs(initialCoverage - target);
+
+  if (isUnderCovered) {
+    for (let step = 0; step < CALIBRATION_ADJUSTMENT_STEPS; step += 1) {
+      const candidate = scaleResiduals(baseResiduals, high, minimums);
+      const coverage = currentCoverage(candidate);
+
+      if (coverage !== null && Math.abs(coverage - target) < bestDistance) {
+        bestDistance = Math.abs(coverage - target);
+        bestResiduals = candidate;
+      }
+
+      if (coverage !== null && coverage >= target - CALIBRATION_TOLERANCE_PERCENTAGE_POINTS) {
+        break;
+      }
+
+      high *= 2;
+    }
+  }
+
+  for (let step = 0; step < CALIBRATION_ADJUSTMENT_STEPS; step += 1) {
+    const factor = (low + high) / 2;
+    const candidate = scaleResiduals(baseResiduals, factor, minimums);
+    const coverage = currentCoverage(candidate);
+
+    if (coverage !== null && Math.abs(coverage - target) < bestDistance) {
+      bestDistance = Math.abs(coverage - target);
+      bestResiduals = candidate;
+    }
+
+    if (isWithinCoverageTolerance(coverage, target)) {
+      return candidate;
+    }
+
+    if (coverage === null || coverage < target) {
+      low = factor;
+    } else {
+      high = factor;
+    }
+  }
+
+  return bestResiduals;
 }
 
 /**
@@ -497,6 +592,8 @@ function buildEmptyCalibration(horizon) {
   return {
     coverage80: null,
     coverage95: null,
+    target80WithinTolerance: null,
+    target95WithinTolerance: null,
     sampleCount: 0,
     avgWidth80: null,
     avgWidth95: null,
@@ -540,24 +637,10 @@ function buildCalibration(values, horizon, method, fallbackScale = 0) {
   residual95 = residual95.map((value, index) => Math.max(value > 0 ? value : fallbackResidual * 1.5, residual80[index]));
   residual80 = enforceNonDecreasing(residual80);
   residual95 = enforceNonDecreasing(residual95);
-
-  let covered80 = 0;
-  let covered95 = 0;
-  let sampleCount = 0;
-
-  residualsByHorizon.forEach((residuals, horizonIndex) => {
-    residuals.forEach((residual) => {
-      if (residual <= residual80[horizonIndex]) {
-        covered80 += 1;
-      }
-
-      if (residual <= residual95[horizonIndex]) {
-        covered95 += 1;
-      }
-
-      sampleCount += 1;
-    });
-  });
+  residual80 = chooseAdjustedResiduals(residualsByHorizon, residual80, 80, "coverage80");
+  residual95 = chooseAdjustedResiduals(residualsByHorizon, residual95, 95, "coverage95", residual80);
+  residual95 = scaleResiduals(residual95, 1, residual80);
+  const coverage = calculateCoverage(residualsByHorizon, residual80, residual95);
 
   const horizonWidths = residual80.map((_value, index) => ({
     horizonMonth: index + 1,
@@ -570,9 +653,11 @@ function buildCalibration(values, horizon, method, fallbackScale = 0) {
     residual80,
     residual95,
     calibration: {
-      coverage80: sampleCount > 0 ? Number(((covered80 / sampleCount) * 100).toFixed(2)) : null,
-      coverage95: sampleCount > 0 ? Number(((covered95 / sampleCount) * 100).toFixed(2)) : null,
-      sampleCount,
+      coverage80: coverage.coverage80,
+      coverage95: coverage.coverage95,
+      target80WithinTolerance: isWithinCoverageTolerance(coverage.coverage80, 80),
+      target95WithinTolerance: isWithinCoverageTolerance(coverage.coverage95, 95),
+      sampleCount: coverage.sampleCount,
       avgWidth80: Number(mean(horizonWidths.map((item) => item.width80)).toFixed(2)),
       avgWidth95: Number(mean(horizonWidths.map((item) => item.width95)).toFixed(2)),
       horizonWidths
