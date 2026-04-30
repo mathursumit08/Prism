@@ -71,11 +71,16 @@ function findMatchingEvents(month, eventCalendar) {
 function applyPointUplift(point, eventCalendar) {
   const matchingEvents = findMatchingEvents(point.month, eventCalendar);
   const totalUpliftPct = matchingEvents.reduce((sum, event) => sum + Number(event.uplift_pct), 0);
-  const upliftedUnitsSold = Math.max(0, Math.round(point.unitsSold * (1 + totalUpliftPct / 100)));
+  const upliftFactor = 1 + totalUpliftPct / 100;
+  const upliftedUnitsSold = Math.max(0, Math.round(point.unitsSold * upliftFactor));
 
   return {
     ...point,
-    unitsSold: upliftedUnitsSold
+    unitsSold: upliftedUnitsSold,
+    lower80: Math.max(0, Math.round((point.lower80 ?? point.unitsSold) * upliftFactor)),
+    upper80: Math.max(0, Math.round((point.upper80 ?? point.unitsSold) * upliftFactor)),
+    lower95: Math.max(0, Math.round((point.lower95 ?? point.unitsSold) * upliftFactor)),
+    upper95: Math.max(0, Math.round((point.upper95 ?? point.unitsSold) * upliftFactor))
   };
 }
 
@@ -120,7 +125,11 @@ function aggregateAdjustedDealers(dealerSeries, level) {
         })),
         forecast: dealer.forecast.map((point) => ({
           month: point.month,
-          unitsSold: 0
+          unitsSold: 0,
+          lower80: 0,
+          upper80: 0,
+          lower95: 0,
+          upper95: 0
         }))
       });
     }
@@ -133,10 +142,84 @@ function aggregateAdjustedDealers(dealerSeries, level) {
 
     dealer.forecast.forEach((point, index) => {
       aggregate.forecast[index].unitsSold += point.unitsSold;
+      aggregate.forecast[index].lower80 += point.lower80 ?? point.unitsSold;
+      aggregate.forecast[index].upper80 += point.upper80 ?? point.unitsSold;
+      aggregate.forecast[index].lower95 += point.lower95 ?? point.unitsSold;
+      aggregate.forecast[index].upper95 += point.upper95 ?? point.unitsSold;
     });
   }
 
   return [...grouped.values()];
+}
+
+function summarizeCalibration(records) {
+  const calibrationRecords = records.filter((record) => Number.isFinite(record.coverage80) && Number.isFinite(record.coverage95));
+
+  if (calibrationRecords.length === 0) {
+    return {
+      coverage80: null,
+      coverage95: null,
+      sampleCount: 0,
+      avgWidth80: null,
+      avgWidth95: null,
+      horizonWidths: []
+    };
+  }
+
+  const totalSamples = calibrationRecords.reduce((sum, record) => sum + record.calibrationSampleCount, 0);
+  const weightedAverage = (key) => {
+    if (totalSamples === 0) {
+      return null;
+    }
+
+    return Number(
+      (
+        calibrationRecords.reduce((sum, record) => sum + Number(record[key]) * record.calibrationSampleCount, 0) /
+        totalSamples
+      ).toFixed(2)
+    );
+  };
+  const horizonGroups = new Map();
+
+  for (const record of calibrationRecords) {
+    if (!horizonGroups.has(record.horizonMonth)) {
+      horizonGroups.set(record.horizonMonth, {
+        horizonMonth: record.horizonMonth,
+        width80: [],
+        width95: [],
+        sampleCount: 0
+      });
+    }
+
+    const group = horizonGroups.get(record.horizonMonth);
+    group.width80.push(record.upper80 - record.lower80);
+    group.width95.push(record.upper95 - record.lower95);
+    group.sampleCount += record.calibrationSampleCount;
+  }
+
+  return {
+    coverage80: weightedAverage("coverage80"),
+    coverage95: weightedAverage("coverage95"),
+    sampleCount: totalSamples,
+    avgWidth80: Number(mean(calibrationRecords.map((record) => record.upper80 - record.lower80)).toFixed(2)),
+    avgWidth95: Number(mean(calibrationRecords.map((record) => record.upper95 - record.lower95)).toFixed(2)),
+    horizonWidths: [...horizonGroups.values()]
+      .sort((left, right) => left.horizonMonth - right.horizonMonth)
+      .map((group) => ({
+        horizonMonth: group.horizonMonth,
+        width80: Number(mean(group.width80).toFixed(2)),
+        width95: Number(mean(group.width95).toFixed(2)),
+        sampleCount: group.sampleCount
+      }))
+  };
+}
+
+function mean(values) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 /**
@@ -256,6 +339,7 @@ function flattenForecast({ runId, scope, forecast }) {
   for (const levelResult of forecast.levels) {
     for (const series of levelResult.series) {
       for (const point of series.forecast) {
+        const horizonMonth = series.forecast.indexOf(point) + 1;
         records.push({
           runId,
           forecastType: FORECAST_TYPE,
@@ -267,10 +351,18 @@ function flattenForecast({ runId, scope, forecast }) {
           variantId: scope.variantId,
           forecastMonth: point.month,
           forecastUnits: point.unitsSold,
+          lower80: point.lower80 ?? point.unitsSold,
+          upper80: point.upper80 ?? point.unitsSold,
+          lower95: point.lower95 ?? point.unitsSold,
+          upper95: point.upper95 ?? point.unitsSold,
+          horizonMonth,
           modelMethod: series.method,
           validationMae: series.validation.mae,
           validationRmse: series.validation.rmse,
-          validationMape: series.validation.mape
+          validationMape: series.validation.mape,
+          coverage80: series.calibration?.coverage80 ?? null,
+          coverage95: series.calibration?.coverage95 ?? null,
+          calibrationSampleCount: series.calibration?.sampleCount ?? 0
         });
       }
     }
@@ -433,7 +525,8 @@ export async function runForecastWorker({
     });
     const inserted = await insertInBatches(allRecords, client);
     const removed = await removeIrrelevantRows(allRecords, client);
-    const completedRun = await ForecastRun.complete(run.run_id, client);
+    const calibration = summarizeCalibration(allRecords);
+    const completedRun = await ForecastRun.complete(run.run_id, calibration, client);
     await client.query("COMMIT");
     ForecastCacheService.clear();
     reportProgress(onProgress, {
@@ -443,6 +536,7 @@ export async function runForecastWorker({
       message: "Forecast regeneration finished successfully.",
       inserted,
       removed,
+      calibration,
       totalScopes: scopes.length,
       processedScopes: scopes.length
     });

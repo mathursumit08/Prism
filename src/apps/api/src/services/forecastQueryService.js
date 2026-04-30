@@ -204,7 +204,11 @@ function groupForecastRows(rows, breakdown) {
 
     groups.get(key).forecast.push({
       month: row.forecast_month,
-      unitsSold: Number(row.forecast_units)
+      unitsSold: Number(row.forecast_units),
+      lower_80: Number(row.lower_80),
+      upper_80: Number(row.upper_80),
+      lower_95: Number(row.lower_95),
+      upper_95: Number(row.upper_95)
     });
   }
 
@@ -388,6 +392,10 @@ async function normalizeRows(config, rows, filters, scope) {
     segment: row.segment ?? null,
     sourceLevel: row.sourceLevel || row.level,
     units: Number(row.forecast_units),
+    lower_80: Number(row.lower_80),
+    upper_80: Number(row.upper_80),
+    lower_95: Number(row.lower_95),
+    upper_95: Number(row.upper_95),
     validation: {
       mae: row.validation_mae === null ? null : Number(row.validation_mae),
       mape: row.validation_mape === null ? null : Number(row.validation_mape),
@@ -484,11 +492,20 @@ function aggregateToNationalRows(rows) {
         group_id: "NATIONAL",
         group_label: "National",
         level: "national",
-        forecast_units: 0
+        forecast_units: 0,
+        lower_80: 0,
+        upper_80: 0,
+        lower_95: 0,
+        upper_95: 0
       });
     }
 
-    groups.get(key).forecast_units += Number(row.forecast_units);
+    const group = groups.get(key);
+    group.forecast_units += Number(row.forecast_units);
+    group.lower_80 += Number(row.lower_80);
+    group.upper_80 += Number(row.upper_80);
+    group.lower_95 += Number(row.lower_95);
+    group.upper_95 += Number(row.upper_95);
   }
 
   return [...groups.values()].sort((left, right) => left.forecast_month.localeCompare(right.forecast_month));
@@ -503,11 +520,20 @@ function aggregateToRegionalRows(rows) {
       groups.set(key, {
         ...row,
         level: "regional",
-        forecast_units: 0
+        forecast_units: 0,
+        lower_80: 0,
+        upper_80: 0,
+        lower_95: 0,
+        upper_95: 0
       });
     }
 
-    groups.get(key).forecast_units += Number(row.forecast_units);
+    const group = groups.get(key);
+    group.forecast_units += Number(row.forecast_units);
+    group.lower_80 += Number(row.lower_80);
+    group.upper_80 += Number(row.upper_80);
+    group.lower_95 += Number(row.lower_95);
+    group.upper_95 += Number(row.upper_95);
   }
 
   return [...groups.values()].sort((left, right) => {

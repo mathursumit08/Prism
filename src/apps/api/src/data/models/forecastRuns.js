@@ -20,15 +20,32 @@ export const ForecastRun = {
   /**
    * Marks a forecast run as completed and records its completion timestamp.
    */
-  async complete(runId, db = pool) {
+  async complete(runId, calibration = {}, db = pool) {
     const result = await db.query(
       `
         UPDATE forecast_runs
-        SET status = 'completed', completed_at = clock_timestamp(), error_message = NULL
+        SET
+          status = 'completed',
+          completed_at = clock_timestamp(),
+          error_message = NULL,
+          coverage_80 = $2,
+          coverage_95 = $3,
+          calibration_sample_count = $4,
+          avg_width_80 = $5,
+          avg_width_95 = $6,
+          horizon_widths = $7::JSONB
         WHERE run_id = $1
         RETURNING *
       `,
-      [runId]
+      [
+        runId,
+        calibration.coverage80 ?? null,
+        calibration.coverage95 ?? null,
+        calibration.sampleCount ?? 0,
+        calibration.avgWidth80 ?? null,
+        calibration.avgWidth95 ?? null,
+        JSON.stringify(calibration.horizonWidths ?? [])
+      ]
     );
 
     return result.rows[0];

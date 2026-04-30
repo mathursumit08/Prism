@@ -51,6 +51,22 @@ function formatUnits(value) {
   return new Intl.NumberFormat("en-IN").format(Math.round(value || 0));
 }
 
+function getBandLabel(visibleIntervals) {
+  if (visibleIntervals.show80 && visibleIntervals.show95) {
+    return "80% and 95% bands";
+  }
+
+  if (visibleIntervals.show80) {
+    return "80% band";
+  }
+
+  if (visibleIntervals.show95) {
+    return "95% band";
+  }
+
+  return "Point forecast only";
+}
+
 function summarizeSeries(series) {
   const total = series.reduce(
     (sum, item) => sum + item.forecast.reduce((itemSum, point) => itemSum + point.unitsSold, 0),
@@ -69,6 +85,24 @@ function summarizeSeries(series) {
   })[0];
 
   return { total, firstMonth, lastMonth, growth, leader };
+}
+
+function summarizeUncertainty(series, bandKey) {
+  const widths = series.flatMap((item) =>
+    item.forecast.map((point) => {
+      if (bandKey === "95") {
+        return (point.upper_95 ?? point.unitsSold) - (point.lower_95 ?? point.unitsSold);
+      }
+
+      return (point.upper_80 ?? point.unitsSold) - (point.lower_80 ?? point.unitsSold);
+    })
+  );
+
+  if (widths.length === 0) {
+    return 0;
+  }
+
+  return widths.reduce((sum, width) => sum + width, 0) / widths.length;
 }
 
 function sumSeriesByMonth(collections, key) {
@@ -116,8 +150,12 @@ function aggregateSeriesBySegment(series) {
         seriesLabel: segmentLabel,
         segment: segmentLabel,
         forecast: item.forecast.map((point) => ({
-          ...point,
-          unitsSold: 0
+          month: point.month,
+          unitsSold: 0,
+          lower_80: 0,
+          upper_80: 0,
+          lower_95: 0,
+          upper_95: 0
         }))
       });
     }
@@ -125,6 +163,10 @@ function aggregateSeriesBySegment(series) {
     const aggregate = grouped.get(segmentLabel);
     item.forecast.forEach((point, index) => {
       aggregate.forecast[index].unitsSold += point.unitsSold;
+      aggregate.forecast[index].lower_80 += point.lower_80 ?? point.unitsSold;
+      aggregate.forecast[index].upper_80 += point.upper_80 ?? point.unitsSold;
+      aggregate.forecast[index].lower_95 += point.lower_95 ?? point.unitsSold;
+      aggregate.forecast[index].upper_95 += point.upper_95 ?? point.unitsSold;
     });
   }
 
@@ -135,6 +177,7 @@ function ForecastChart({
   series,
   hoveredGroupId,
   onHoverGroup,
+  visibleIntervals = {},
   message = "Forecast data will appear here when it is available."
 }) {
   if (!series.length) {
@@ -148,8 +191,15 @@ function ForecastChart({
   const chartHeight = height - padding.top - padding.bottom;
   const xAxisLabelY = padding.top + chartHeight + 12;
   const points = series.flatMap((item) => item.forecast);
-  const maxValue = Math.max(...points.map((point) => point.unitsSold), 1);
-  const minValue = Math.min(...points.map((point) => point.unitsSold), 0);
+  const valuesForScale = points.flatMap((point) => [
+    point.unitsSold,
+    visibleIntervals.show80 ? point.lower_80 : point.unitsSold,
+    visibleIntervals.show80 ? point.upper_80 : point.unitsSold,
+    visibleIntervals.show95 ? point.lower_95 : point.unitsSold,
+    visibleIntervals.show95 ? point.upper_95 : point.unitsSold
+  ]);
+  const maxValue = Math.max(...valuesForScale, 1);
+  const minValue = Math.min(...valuesForScale, 0);
   const range = Math.max(maxValue - minValue, 1);
   const monthCount = series[0]?.forecast.length || 1;
 
@@ -191,10 +241,25 @@ function ForecastChart({
           const path = item.forecast
             .map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${xFor(pointIndex)} ${yFor(point.unitsSold)}`)
             .join(" ");
+          const buildBandPath = (lowerKey, upperKey) => {
+            const upperPath = item.forecast
+              .map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${xFor(pointIndex)} ${yFor(point[upperKey] ?? point.unitsSold)}`)
+              .join(" ");
+            const lowerPath = [...item.forecast]
+              .reverse()
+              .map((point, reverseIndex) => {
+                const pointIndex = item.forecast.length - reverseIndex - 1;
+                return `L ${xFor(pointIndex)} ${yFor(point[lowerKey] ?? point.unitsSold)}`;
+              })
+              .join(" ");
+
+            return `${upperPath} ${lowerPath} Z`;
+          };
           const isHovered = hoveredGroupId === seriesId;
           const hasHoveredSeries = Boolean(hoveredGroupId);
           const color = getSeriesColor(itemIndex, series.length);
           const seriesOpacity = isHovered ? 1 : hasHoveredSeries ? 0.14 : 0.5;
+          const bandOpacity = isHovered ? 0.2 : hasHoveredSeries ? 0.04 : 0.08;
 
           return (
             <g
@@ -203,6 +268,26 @@ function ForecastChart({
               onMouseEnter={() => onHoverGroup(seriesId)}
               onMouseLeave={() => onHoverGroup("")}
             >
+              {visibleIntervals.show95 && (
+                <path
+                  d={buildBandPath("lower_95", "upper_95")}
+                  fill={color}
+                  opacity={bandOpacity}
+                  stroke="none"
+                >
+                  <title>{`${label}: 95% prediction interval`}</title>
+                </path>
+              )}
+              {visibleIntervals.show80 && (
+                <path
+                  d={buildBandPath("lower_80", "upper_80")}
+                  fill={color}
+                  opacity={bandOpacity + 0.08}
+                  stroke="none"
+                >
+                  <title>{`${label}: 80% prediction interval`}</title>
+                </path>
+              )}
               <path
                 d={path}
                 stroke={color}
@@ -384,6 +469,10 @@ export default function ForecastPage() {
   const [horizonMonths, setHorizonMonths] = useState(6);
   const [hoveredGroupId, setHoveredGroupId] = useState("");
   const [hoveredBreakdownId, setHoveredBreakdownId] = useState("");
+  const [visibleIntervals, setVisibleIntervals] = useState({
+    show80: false,
+    show95: false
+  });
   const [referenceState, setReferenceState] = useState({
     loading: true,
     error: "",
@@ -699,6 +788,8 @@ export default function ForecastPage() {
   const hasForecastData = visibleSeries.length > 0;
   const hasBreakdownData = visibleBreakdownSeries.length > 0;
   const summary = hasForecastData ? summarizeSeries(visibleSeries) : { total: 0, growth: 0, leader: null };
+  const avgWidth80 = hasForecastData ? summarizeUncertainty(visibleSeries, "80") : 0;
+  const avgWidth95 = hasForecastData ? summarizeUncertainty(visibleSeries, "95") : 0;
   const breakdownSummary = hasBreakdownData
     ? summarizeSeries(visibleBreakdownSeries)
     : { total: 0, growth: 0, leader: null };
@@ -719,7 +810,7 @@ export default function ForecastPage() {
           <h1>Track zone and state forecasts with a live segment split for each region.</h1>
         </div>
         <img
-          src="https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1200&q=80"
+          src="/resources/images/forecast-analytics-dashboard.jpg"
           alt="Forecast analytics dashboard"
         />
       </section>
@@ -885,12 +976,12 @@ export default function ForecastPage() {
           <p>{availableLevels.find((item) => item.value === level)?.label}</p>
         </article>
         <article className="metric">
-          <span>Leading segment</span>
-          <strong>{hasBreakdownData ? getSeriesLabel(breakdownSummary.leader) : "No data"}</strong>
+          <span>Avg uncertainty band</span>
+          <strong>{hasForecastData ? formatUnits(visibleIntervals.show95 ? avgWidth95 : avgWidth80) : "No data"}</strong>
           <p>
-            {hasBreakdownData
-              ? `${visibleBreakdownSeries.length}/${segments.length || visibleBreakdownSeries.length} configured segments covered`
-              : "Segment breakdown unavailable"}
+            {hasForecastData
+              ? `${visibleIntervals.show95 ? "95%" : "80%"} interval average width`
+              : "Intervals will appear with forecast data"}
           </p>
         </article>
       </section>
@@ -941,9 +1032,37 @@ export default function ForecastPage() {
             <p className="eyebrow">Forecast graph</p>
             <h2>Monthly units by {availableLevels.find((item) => item.value === level)?.label.toLowerCase()}</h2>
           </div>
-          <span className={hasForecastData ? "source-pill live" : "source-pill"}>
-            {forecastState.loading ? "Loading" : hasForecastData ? "Live API" : "No data"}
-          </span>
+          <div className="interval-toggle-group" aria-label="Prediction interval display options">
+            <label>
+              <input
+                type="checkbox"
+                checked={visibleIntervals.show80}
+                onChange={(event) =>
+                  setVisibleIntervals((current) => ({
+                    ...current,
+                    show80: event.target.checked
+                  }))
+                }
+              />
+              80% band
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={visibleIntervals.show95}
+                onChange={(event) =>
+                  setVisibleIntervals((current) => ({
+                    ...current,
+                    show95: event.target.checked
+                  }))
+                }
+              />
+              95% band
+            </label>
+            <span className={hasForecastData ? "source-pill live" : "source-pill"}>
+              {forecastState.loading ? "Loading" : hasForecastData ? "Live API" : "No data"}
+            </span>
+          </div>
         </div>
 
         {forecastState.error && <p className="notice">{forecastState.error}</p>}
@@ -952,8 +1071,24 @@ export default function ForecastPage() {
           series={visibleSeries}
           hoveredGroupId={hoveredGroupId}
           onHoverGroup={setHoveredGroupId}
+          visibleIntervals={visibleIntervals}
           message={chartMessage}
         />
+
+        <div className="chart-legend interval-legend">
+          <span>
+            <i className="legend-line forecast-line" />
+            Point forecast
+          </span>
+          <span className={visibleIntervals.show80 ? "" : "muted"}>
+            <i className="interval-swatch interval-80" />
+            80% interval
+          </span>
+          <span className={visibleIntervals.show95 ? "" : "muted"}>
+            <i className="interval-swatch interval-95" />
+            95% interval
+          </span>
+        </div>
 
         {hasForecastData && (
           <div className="legend">
@@ -973,14 +1108,17 @@ export default function ForecastPage() {
       </section>
 
       <section className="forecast-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Regional segment split</p>
-            <h2>{shouldLoadBreakdown ? `Segments within ${breakdownContextLabel}` : "Model or variant filter active"}</h2>
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Regional segment split</p>
+              <h2>{shouldLoadBreakdown ? `Segments within ${breakdownContextLabel}` : "Model or variant filter active"}</h2>
+            </div>
+          <div className="panel-pill-group">
+            <span className="source-pill interval-context">{getBandLabel(visibleIntervals)}</span>
+            <span className={hasBreakdownData ? "source-pill live" : "source-pill"}>
+              {breakdownState.loading ? "Loading" : hasBreakdownData ? "Cached API" : "No data"}
+            </span>
           </div>
-          <span className={hasBreakdownData ? "source-pill live" : "source-pill"}>
-            {breakdownState.loading ? "Loading" : hasBreakdownData ? "Cached API" : "No data"}
-          </span>
         </div>
 
         {breakdownState.error && <p className="notice">{breakdownState.error}</p>}
@@ -989,6 +1127,7 @@ export default function ForecastPage() {
           series={visibleBreakdownSeries}
           hoveredGroupId={hoveredBreakdownId}
           onHoverGroup={setHoveredBreakdownId}
+          visibleIntervals={visibleIntervals}
           message={breakdownMessage}
         />
 
@@ -1016,6 +1155,7 @@ export default function ForecastPage() {
               <p className="eyebrow">Segment breakdown</p>
               <h2>Next {horizonMonths} months for {breakdownContextLabel}</h2>
             </div>
+            <span className="source-pill interval-context">{getBandLabel(visibleIntervals)}</span>
           </div>
           <div className="table-scroll">
             <table>
@@ -1032,7 +1172,16 @@ export default function ForecastPage() {
                   <tr key={getSeriesId(item)}>
                     <th>{getSeriesLabel(item)}</th>
                     {item.forecast.map((point) => (
-                      <td key={point.month}>{formatUnits(point.unitsSold)}</td>
+                      <td key={point.month}>
+                        <strong>{formatUnits(point.unitsSold)}</strong>
+                        {(visibleIntervals.show80 || visibleIntervals.show95) && (
+                          <small>
+                            {visibleIntervals.show80 && `${formatUnits(point.lower_80)}-${formatUnits(point.upper_80)}`}
+                            {visibleIntervals.show80 && visibleIntervals.show95 ? " | " : ""}
+                            {visibleIntervals.show95 && `${formatUnits(point.lower_95)}-${formatUnits(point.upper_95)}`}
+                          </small>
+                        )}
+                      </td>
                     ))}
                   </tr>
                 ))}

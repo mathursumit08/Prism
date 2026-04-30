@@ -6,6 +6,12 @@ CREATE TABLE IF NOT EXISTS forecast_runs (
   forecast_type VARCHAR(32) NOT NULL DEFAULT 'baseline',
   status VARCHAR(24) NOT NULL DEFAULT 'running',
   horizon_months INTEGER NOT NULL CHECK (horizon_months BETWEEN 1 AND 24),
+  coverage_80 NUMERIC(5, 2),
+  coverage_95 NUMERIC(5, 2),
+  calibration_sample_count INTEGER NOT NULL DEFAULT 0,
+  avg_width_80 NUMERIC(12, 2),
+  avg_width_95 NUMERIC(12, 2),
+  horizon_widths JSONB NOT NULL DEFAULT '[]'::JSONB,
   started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   completed_at TIMESTAMPTZ,
   error_message TEXT
@@ -23,12 +29,18 @@ CREATE TABLE IF NOT EXISTS forecast_data (
   variant_id VARCHAR(16) REFERENCES vehicle_variants(variant_id) ON UPDATE CASCADE ON DELETE RESTRICT,
   forecast_month DATE NOT NULL,
   forecast_units INTEGER NOT NULL CHECK (forecast_units >= 0),
+  lower_80 INTEGER NOT NULL CHECK (lower_80 >= 0),
+  upper_80 INTEGER NOT NULL CHECK (upper_80 >= 0),
+  lower_95 INTEGER NOT NULL CHECK (lower_95 >= 0),
+  upper_95 INTEGER NOT NULL CHECK (upper_95 >= 0),
   model_method VARCHAR(120) NOT NULL,
   validation_mae NUMERIC(12, 2),
   validation_rmse NUMERIC(12, 2),
   validation_mape NUMERIC(12, 2),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT forecast_data_80_interval_order CHECK (lower_80 <= forecast_units AND forecast_units <= upper_80),
+  CONSTRAINT forecast_data_95_interval_order CHECK (lower_95 <= lower_80 AND upper_80 <= upper_95)
 );
 
 -- Supports fast lookup of the latest completed baseline run.
