@@ -36,7 +36,7 @@ function HomePage({ onPrimaryAction, user }) {
         </button>
       </div>
       <img
-        src="https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=900&q=80"
+        src="/resources/images/sales-planning-workspace.jpg"
         alt="Sales planning workspace"
       />
     </section>

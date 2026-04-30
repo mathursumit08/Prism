@@ -119,6 +119,46 @@ After dealer forecasts are created, the system rolls them up:
 Because those higher levels are aggregated from dealer results, total forecasted
 units remain consistent across dealerwise, statewise, and zonewise views.
 
+## Prediction Intervals
+
+Each forecast point includes empirical prediction interval bands:
+
+- `lower_80` and `upper_80`
+- `lower_95` and `upper_95`
+
+The interval method is conformal residual calibration over rolling hold-out
+forecasts. For each dealer series, the worker replays up to the last 12 monthly
+origins. At each origin, it trains the selected model family on the data
+available at that time, forecasts the available future months, and records the
+absolute residual by horizon month.
+
+The 80% and 95% interval half-widths are empirical residual quantiles for each
+horizon month. Because forecast uncertainty should not shrink simply due to
+sparse samples at later horizons, the worker enforces non-decreasing
+half-widths across the horizon. After the initial quantile calculation, the
+worker adjusts the half-widths against the rolling hold-out residual samples
+until observed 80% and 95% coverage are within +/-2 percentage points of their
+nominal targets when possible. Sparse series fall back to a conservative
+moving-average band.
+
+Intervals are clipped at zero because vehicle unit demand cannot be negative.
+Festive-event uplift rules are applied to the point forecast and interval
+bounds together. State, zone, regional, and national interval bands are built
+by aggregating the lower and upper bounds from dealer-level forecasts.
+
+Run-level calibration metrics are stored with each completed forecast run and
+returned by `/api/v1/forecasts/admin/status`:
+
+- observed 80% and 95% coverage on rolling hold-out samples
+- whether each coverage value is within the +/-2% tolerance of nominal
+- calibration sample count
+- average 80% and 95% interval width
+- width by horizon month
+
+If the final run-level 80% or 95% calibration coverage is outside the +/-2%
+tolerance, the worker fails the forecast run instead of publishing intervals
+that do not meet the calibration acceptance criterion.
+
 ## Event Uplifts
 
 After the baseline dealer forecast is produced, the worker checks the forecast
@@ -154,6 +194,7 @@ Each output series includes:
 - Validation metrics from the holdout window.
 - Forecast month.
 - Forecast units.
+- Prediction interval bounds: `lower_80`, `upper_80`, `lower_95`, and `upper_95`.
 
 ## Nightly Storage Flow
 
@@ -195,6 +236,9 @@ The stored forecast API is:
 ```bash
 GET /api/forecasts/baseline
 ```
+
+Each forecast point in the response includes `unitsSold`, `lower_80`,
+`upper_80`, `lower_95`, and `upper_95`.
 
 Supported query parameters:
 

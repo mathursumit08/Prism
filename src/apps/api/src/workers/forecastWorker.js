@@ -10,6 +10,7 @@ dotenv.config();
 const FORECAST_TYPE = "baseline";
 const DEFAULT_HORIZON = 6;
 const MAX_BATCH_SIZE = 500;
+const CALIBRATION_TOLERANCE_PERCENTAGE_POINTS = 2;
 const workerLockId = 46013520;
 const currentFile = fileURLToPath(import.meta.url);
 
@@ -71,11 +72,16 @@ function findMatchingEvents(month, eventCalendar) {
 function applyPointUplift(point, eventCalendar) {
   const matchingEvents = findMatchingEvents(point.month, eventCalendar);
   const totalUpliftPct = matchingEvents.reduce((sum, event) => sum + Number(event.uplift_pct), 0);
-  const upliftedUnitsSold = Math.max(0, Math.round(point.unitsSold * (1 + totalUpliftPct / 100)));
+  const upliftFactor = 1 + totalUpliftPct / 100;
+  const upliftedUnitsSold = Math.max(0, Math.round(point.unitsSold * upliftFactor));
 
   return {
     ...point,
-    unitsSold: upliftedUnitsSold
+    unitsSold: upliftedUnitsSold,
+    lower80: Math.max(0, Math.round((point.lower80 ?? point.unitsSold) * upliftFactor)),
+    upper80: Math.max(0, Math.round((point.upper80 ?? point.unitsSold) * upliftFactor)),
+    lower95: Math.max(0, Math.round((point.lower95 ?? point.unitsSold) * upliftFactor)),
+    upper95: Math.max(0, Math.round((point.upper95 ?? point.unitsSold) * upliftFactor))
   };
 }
 
@@ -120,7 +126,11 @@ function aggregateAdjustedDealers(dealerSeries, level) {
         })),
         forecast: dealer.forecast.map((point) => ({
           month: point.month,
-          unitsSold: 0
+          unitsSold: 0,
+          lower80: 0,
+          upper80: 0,
+          lower95: 0,
+          upper95: 0
         }))
       });
     }
@@ -133,10 +143,104 @@ function aggregateAdjustedDealers(dealerSeries, level) {
 
     dealer.forecast.forEach((point, index) => {
       aggregate.forecast[index].unitsSold += point.unitsSold;
+      aggregate.forecast[index].lower80 += point.lower80 ?? point.unitsSold;
+      aggregate.forecast[index].upper80 += point.upper80 ?? point.unitsSold;
+      aggregate.forecast[index].lower95 += point.lower95 ?? point.unitsSold;
+      aggregate.forecast[index].upper95 += point.upper95 ?? point.unitsSold;
     });
   }
 
   return [...grouped.values()];
+}
+
+function summarizeCalibration(summaries) {
+  const calibrationRecords = summaries.filter((record) => Number.isFinite(record.coverage80) && Number.isFinite(record.coverage95));
+
+  if (calibrationRecords.length === 0) {
+    return {
+      coverage80: null,
+      coverage95: null,
+      sampleCount: 0,
+      avgWidth80: null,
+      avgWidth95: null,
+      horizonWidths: []
+    };
+  }
+
+  const totalSamples = calibrationRecords.reduce((sum, record) => sum + record.calibrationSampleCount, 0);
+  const weightedAverage = (key) => {
+    if (totalSamples === 0) {
+      return null;
+    }
+
+    return Number(
+      (
+        calibrationRecords.reduce((sum, record) => sum + Number(record[key]) * record.calibrationSampleCount, 0) /
+        totalSamples
+      ).toFixed(2)
+    );
+  };
+  const horizonGroups = new Map();
+
+  for (const record of calibrationRecords) {
+    for (const width of record.horizonWidths) {
+      if (!horizonGroups.has(width.horizonMonth)) {
+        horizonGroups.set(width.horizonMonth, {
+          horizonMonth: width.horizonMonth,
+          weightedWidth80: 0,
+          weightedWidth95: 0,
+          sampleCount: 0
+        });
+      }
+
+      const group = horizonGroups.get(width.horizonMonth);
+      const sampleCount = Number(width.sampleCount || 0);
+      group.weightedWidth80 += Number(width.width80 || 0) * sampleCount;
+      group.weightedWidth95 += Number(width.width95 || 0) * sampleCount;
+      group.sampleCount += sampleCount;
+    }
+  }
+
+  return {
+    coverage80: weightedAverage("coverage80"),
+    coverage95: weightedAverage("coverage95"),
+    sampleCount: totalSamples,
+    avgWidth80: weightedAverage("avgWidth80"),
+    avgWidth95: weightedAverage("avgWidth95"),
+    horizonWidths: [...horizonGroups.values()]
+      .sort((left, right) => left.horizonMonth - right.horizonMonth)
+      .map((group) => ({
+        horizonMonth: group.horizonMonth,
+        width80: group.sampleCount > 0 ? Number((group.weightedWidth80 / group.sampleCount).toFixed(2)) : 0,
+        width95: group.sampleCount > 0 ? Number((group.weightedWidth95 / group.sampleCount).toFixed(2)) : 0,
+        sampleCount: group.sampleCount
+      }))
+  };
+}
+
+function isWithinCoverageTolerance(value, target) {
+  return value !== null && Math.abs(value - target) <= CALIBRATION_TOLERANCE_PERCENTAGE_POINTS;
+}
+
+function assertCalibrationWithinTolerance(calibration) {
+  const coverage80Valid = isWithinCoverageTolerance(calibration.coverage80, 80);
+  const coverage95Valid = isWithinCoverageTolerance(calibration.coverage95, 95);
+
+  if (!coverage80Valid || !coverage95Valid) {
+    const error = new Error(
+      `Forecast interval calibration is outside tolerance: 80% coverage=${calibration.coverage80 ?? "n/a"}%, 95% coverage=${calibration.coverage95 ?? "n/a"}%`
+    );
+    error.code = "CALIBRATION_OUT_OF_TOLERANCE";
+    throw error;
+  }
+}
+
+function mean(values) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 /**
@@ -256,6 +360,7 @@ function flattenForecast({ runId, scope, forecast }) {
   for (const levelResult of forecast.levels) {
     for (const series of levelResult.series) {
       for (const point of series.forecast) {
+        const horizonMonth = series.forecast.indexOf(point) + 1;
         records.push({
           runId,
           forecastType: FORECAST_TYPE,
@@ -267,6 +372,11 @@ function flattenForecast({ runId, scope, forecast }) {
           variantId: scope.variantId,
           forecastMonth: point.month,
           forecastUnits: point.unitsSold,
+          lower80: point.lower80 ?? point.unitsSold,
+          upper80: point.upper80 ?? point.unitsSold,
+          lower95: point.lower95 ?? point.unitsSold,
+          upper95: point.upper95 ?? point.unitsSold,
+          horizonMonth,
           modelMethod: series.method,
           validationMae: series.validation.mae,
           validationRmse: series.validation.rmse,
@@ -277,6 +387,42 @@ function flattenForecast({ runId, scope, forecast }) {
   }
 
   return records;
+}
+
+function collectCalibrationSummaries({ scope, forecast }) {
+  const summaries = [];
+  const dealerLevel = forecast.levels.find((levelResult) => levelResult.level === "dealer");
+
+  for (const series of dealerLevel?.series ?? []) {
+    const calibration = series.calibration;
+
+    if (!calibration || !Number.isFinite(calibration.coverage80) || !Number.isFinite(calibration.coverage95)) {
+      continue;
+    }
+
+    const horizonWidths = series.forecast.map((point, index) => {
+      const calibrationWidth = calibration.horizonWidths?.[index];
+
+      return {
+        horizonMonth: index + 1,
+        width80: (point.upper80 ?? point.unitsSold) - (point.lower80 ?? point.unitsSold),
+        width95: (point.upper95 ?? point.unitsSold) - (point.lower95 ?? point.unitsSold),
+        sampleCount: calibrationWidth?.sampleCount ?? 0
+      };
+    });
+
+    summaries.push({
+      seriesKey: `${scope.segment ?? ""}:${scope.modelId ?? ""}:${scope.variantId ?? ""}:${series.groupId}`,
+      coverage80: calibration.coverage80,
+      coverage95: calibration.coverage95,
+      calibrationSampleCount: calibration.sampleCount,
+      avgWidth80: Number(mean(horizonWidths.map((item) => item.width80)).toFixed(2)),
+      avgWidth95: Number(mean(horizonWidths.map((item) => item.width95)).toFixed(2)),
+      horizonWidths
+    });
+  }
+
+  return summaries;
 }
 
 /**
@@ -364,8 +510,6 @@ export async function runForecastWorker({
       };
     }
 
-    await client.query("BEGIN");
-
     run = await ForecastRun.create(
       {
         forecastType: FORECAST_TYPE,
@@ -373,6 +517,8 @@ export async function runForecastWorker({
       },
       client
     );
+    await client.query("BEGIN");
+
     reportProgress(onProgress, {
       stage: "loading-source-data",
       stageLabel: "Loading source data",
@@ -383,6 +529,7 @@ export async function runForecastWorker({
     const scopes = await fetchForecastScopes(client);
     const eventCalendar = await fetchEventCalendar(client);
     const allRecords = [];
+    const allCalibrationSummaries = [];
     reportProgress(onProgress, {
       stage: "processing",
       stageLabel: "Processing",
@@ -412,6 +559,12 @@ export async function runForecastWorker({
           forecast: adjustedForecast
         })
       );
+      allCalibrationSummaries.push(
+        ...collectCalibrationSummaries({
+          scope,
+          forecast: adjustedForecast
+        })
+      );
 
       reportProgress(onProgress, {
         stage: "processing",
@@ -433,7 +586,9 @@ export async function runForecastWorker({
     });
     const inserted = await insertInBatches(allRecords, client);
     const removed = await removeIrrelevantRows(allRecords, client);
-    const completedRun = await ForecastRun.complete(run.run_id, client);
+    const calibration = summarizeCalibration(allCalibrationSummaries);
+    assertCalibrationWithinTolerance(calibration);
+    const completedRun = await ForecastRun.complete(run.run_id, calibration, client);
     await client.query("COMMIT");
     ForecastCacheService.clear();
     reportProgress(onProgress, {
@@ -443,6 +598,7 @@ export async function runForecastWorker({
       message: "Forecast regeneration finished successfully.",
       inserted,
       removed,
+      calibration,
       totalScopes: scopes.length,
       processedScopes: scopes.length
     });

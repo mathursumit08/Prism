@@ -87,6 +87,10 @@ const forecastResponseSchema = {
           forecastDate: { format: "date", type: "string" },
           horizonMonth: { nullable: true, type: "integer" },
           units: { type: "number" },
+          lower_80: { type: "number" },
+          upper_80: { type: "number" },
+          lower_95: { type: "number" },
+          upper_95: { type: "number" },
           method: { nullable: true, type: "string" },
           validation: {
             type: "object",

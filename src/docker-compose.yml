@@ -5,6 +5,8 @@ services:
       dockerfile: apps/api/Dockerfile
     container_name: monorepo_api
     restart: unless-stopped
+    env_file:
+      - apps/api/.env
     environment:
       NODE_ENV: production
       PORT: 4000
@@ -29,6 +31,8 @@ services:
     container_name: monorepo_forecast_worker
     restart: unless-stopped
     command: ["npm", "run", "worker:forecast"]
+    env_file:
+      - apps/api/.env
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://postgres:Vectordbm1@postgres:5432/monorepo_db

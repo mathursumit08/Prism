@@ -6,6 +6,14 @@ function formatUnits(value) {
   return new Intl.NumberFormat("en-IN").format(Math.round(value || 0));
 }
 
+function formatPercent(value) {
+  if (value === null || value === undefined) {
+    return "Not available";
+  }
+
+  return `${Number(value).toFixed(1)}%`;
+}
+
 function formatDateTime(value) {
   if (!value) {
     return "Not available";
@@ -36,12 +44,27 @@ function formatDuration(start, end) {
   const minutes = totalNanoseconds / minuteNs;
   const seconds = (totalNanoseconds % minuteNs) / secondNs;
   const milliseconds = (totalNanoseconds % secondNs) / millisecondNs;
+  const remainingNanoseconds = totalNanoseconds % millisecondNs;
 
-  if (minutes === 0n && seconds === 0n && milliseconds === 0n) {
-    return `0m 0s 0ms ${totalNanoseconds}ns`;
+  const parts = [];
+
+  if (minutes > 0n) {
+    parts.push(`${minutes}m`);
   }
 
-  return `${minutes}m ${seconds}s ${milliseconds}ms`;
+  if (seconds > 0n) {
+    parts.push(`${seconds}s`);
+  }
+
+  if (milliseconds > 0n) {
+    parts.push(`${milliseconds}ms`);
+  }
+
+  if (parts.length === 0) {
+    parts.push(`${remainingNanoseconds}ns`);
+  }
+
+  return parts.join(" ");
 }
 
 function parseTimestampToNanoseconds(value) {
@@ -239,6 +262,7 @@ export default function AdminPage() {
   const lastFailedRun = data?.lastFailedRun;
   const latestRun = data?.latestRun;
   const activeEvents = data?.activeEvents || [];
+  const calibration = data?.calibration;
   const progressStages = [
     { key: "initializing", label: "Initializing" },
     { key: "loading-source-data", label: "Loading source data" },
@@ -313,7 +337,7 @@ export default function AdminPage() {
         </div>
       </section>
 
-      <section className="summary-grid" aria-label="Forecast admin summary">
+      <section className="summary-grid admin-summary-grid" aria-label="Forecast admin summary">
         <article className="metric">
           <span>Last successful run</span>
           <strong>{lastSuccessfulRun ? formatDateTime(lastSuccessfulRun.completedAt) : "Not available"}</strong>
@@ -332,6 +356,11 @@ export default function AdminPage() {
           <span>Latest run duration</span>
           <strong>{latestRunDuration}</strong>
           <p>{latestRun ? `Latest run status: ${latestRun.status}` : "Run duration will appear after the first run."}</p>
+        </article>
+        <article className="metric">
+          <span>Interval calibration</span>
+          <strong>{calibration ? formatPercent(calibration.coverage80) : "No data"}</strong>
+          <p>80% empirical coverage on rolling hold-out.</p>
         </article>
       </section>
 
@@ -407,6 +436,56 @@ export default function AdminPage() {
       </section>
 
       <section className="analytics-grid" aria-label="Forecast assumptions">
+        <article className="analytics-panel">
+          <div className="panel-heading compact">
+            <div>
+              <p className="eyebrow">Calibration</p>
+              <h2>Prediction interval coverage</h2>
+            </div>
+          </div>
+          {calibration ? (
+            <>
+              <div className="calibration-grid">
+                <div className={calibration.target80WithinTolerance ? "calibration-card healthy" : "calibration-card warning"}>
+                  <span>80% target</span>
+                  <strong>{formatPercent(calibration.coverage80)}</strong>
+                  <p>{calibration.target80WithinTolerance ? "Within +/-2% tolerance" : "Outside +/-2% tolerance"}</p>
+                </div>
+                <div className={calibration.target95WithinTolerance ? "calibration-card healthy" : "calibration-card warning"}>
+                  <span>95% target</span>
+                  <strong>{formatPercent(calibration.coverage95)}</strong>
+                  <p>{calibration.target95WithinTolerance ? "Within +/-2% tolerance" : "Outside +/-2% tolerance"}</p>
+                </div>
+              </div>
+              <div className="admin-detail-list">
+                <div>
+                  <span>Calibration sample count</span>
+                  <strong>{formatUnits(calibration.sampleCount)}</strong>
+                </div>
+                <div>
+                  <span>Average interval width</span>
+                  <strong>
+                    80%: {formatUnits(calibration.avgWidth80)} | 95%: {formatUnits(calibration.avgWidth95)}
+                  </strong>
+                </div>
+                <div>
+                  <span>Horizon width trend</span>
+                  <strong>
+                    {calibration.horizonWidths?.length
+                      ? calibration.horizonWidths
+                          .slice(0, 6)
+                          .map((item) => `M${item.horizonMonth}: ${formatUnits(item.width80)}/${formatUnits(item.width95)}`)
+                          .join(" | ")
+                      : "Not available"}
+                  </strong>
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="notice compact-notice">Calibration metrics will appear after the next completed forecast run.</p>
+          )}
+        </article>
+
         <article className="analytics-panel">
           <div className="panel-heading compact">
             <div>

@@ -57,7 +57,24 @@ function normalizeRun(row) {
     status: row.status,
     startedAt: row.started_at,
     completedAt: row.completed_at,
-    errorMessage: row.error_message
+    errorMessage: row.error_message,
+    calibration: normalizeCalibration(row)
+  };
+}
+
+function normalizeCalibration(row) {
+  const coverage80 = row.coverage_80 === null || row.coverage_80 === undefined ? null : Number(row.coverage_80);
+  const coverage95 = row.coverage_95 === null || row.coverage_95 === undefined ? null : Number(row.coverage_95);
+
+  return {
+    coverage80,
+    coverage95,
+    target80WithinTolerance: coverage80 === null ? null : Math.abs(coverage80 - 80) <= 2,
+    target95WithinTolerance: coverage95 === null ? null : Math.abs(coverage95 - 95) <= 2,
+    sampleCount: Number(row.calibration_sample_count || 0),
+    avgWidth80: row.avg_width_80 === null || row.avg_width_80 === undefined ? null : Number(row.avg_width_80),
+    avgWidth95: row.avg_width_95 === null || row.avg_width_95 === undefined ? null : Number(row.avg_width_95),
+    horizonWidths: Array.isArray(row.horizon_widths) ? row.horizon_widths : []
   };
 }
 
@@ -116,6 +133,7 @@ export const ForecastAdminService = {
       lastSuccessfulRun: normalizeRun(lastSuccessfulRun),
       latestRun: normalizeRun(latestRun),
       lastFailedRun: normalizeRun(lastFailedRun),
+      calibration: lastSuccessfulRun ? normalizeCalibration(lastSuccessfulRun) : null,
       storedForecastRows,
       activeEvents: activeEvents.map(normalizeEvent)
     };
