@@ -398,6 +398,12 @@ select:disabled {
   margin-bottom: 12px;
 }
 
+.panel-subcopy {
+  margin: 8px 0 0;
+  color: #666666;
+  font-size: 0.9rem;
+}
+
 .source-pill {
   flex: 0 0 auto;
   padding: 8px 12px;

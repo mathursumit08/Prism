@@ -177,6 +177,8 @@ export const ForecastData = {
           level,
           groupId,
           segment,
+          modelId,
+          variantId,
           forecastType,
           scope
         },
@@ -292,13 +294,14 @@ async function findLatestExactRows(
   return result.rows;
 }
 
-async function findLatestSegmentBreakdownRows({ latestRunId, level, groupId, segment, forecastType, scope }, db = pool) {
+async function findLatestSegmentBreakdownRows(
+  { latestRunId, level, groupId, segment, modelId, variantId, forecastType, scope },
+  db = pool
+) {
   const conditions = [
     "fd.forecast_type = $1",
     "fd.run_id = $2",
-    "fd.segment IS NOT NULL",
-    "fd.model_id IS NULL",
-    "fd.variant_id IS NULL"
+    "fd.segment IS NOT NULL"
   ];
   const values = [forecastType, latestRunId];
 
@@ -315,6 +318,20 @@ async function findLatestSegmentBreakdownRows({ latestRunId, level, groupId, seg
   if (segment) {
     values.push(segment);
     conditions.push(`fd.segment = $${values.length}`);
+  }
+
+  if (modelId) {
+    values.push(modelId);
+    conditions.push(`fd.model_id = $${values.length}`);
+  } else {
+    conditions.push("fd.model_id IS NULL");
+  }
+
+  if (variantId) {
+    values.push(variantId);
+    conditions.push(`fd.variant_id = $${values.length}`);
+  } else {
+    conditions.push("fd.variant_id IS NULL");
   }
 
   appendScopeCondition(conditions, values, scope);

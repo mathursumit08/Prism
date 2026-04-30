@@ -51,16 +51,12 @@ function formatUnits(value) {
   return new Intl.NumberFormat("en-IN").format(Math.round(value || 0));
 }
 
-function getBandLabel(visibleIntervals) {
-  if (visibleIntervals.show80 && visibleIntervals.show95) {
-    return "80% and 95% bands";
-  }
-
-  if (visibleIntervals.show80) {
+function getBandLabel(intervalMode) {
+  if (intervalMode === "80") {
     return "80% band";
   }
 
-  if (visibleIntervals.show95) {
+  if (intervalMode === "95") {
     return "95% band";
   }
 
@@ -177,7 +173,7 @@ function ForecastChart({
   series,
   hoveredGroupId,
   onHoverGroup,
-  visibleIntervals = {},
+  intervalMode = "point",
   message = "Forecast data will appear here when it is available."
 }) {
   if (!series.length) {
@@ -193,10 +189,10 @@ function ForecastChart({
   const points = series.flatMap((item) => item.forecast);
   const valuesForScale = points.flatMap((point) => [
     point.unitsSold,
-    visibleIntervals.show80 ? point.lower_80 : point.unitsSold,
-    visibleIntervals.show80 ? point.upper_80 : point.unitsSold,
-    visibleIntervals.show95 ? point.lower_95 : point.unitsSold,
-    visibleIntervals.show95 ? point.upper_95 : point.unitsSold
+    intervalMode === "80" ? point.lower_80 : point.unitsSold,
+    intervalMode === "80" ? point.upper_80 : point.unitsSold,
+    intervalMode === "95" ? point.lower_95 : point.unitsSold,
+    intervalMode === "95" ? point.upper_95 : point.unitsSold
   ]);
   const maxValue = Math.max(...valuesForScale, 1);
   const minValue = Math.min(...valuesForScale, 0);
@@ -268,7 +264,7 @@ function ForecastChart({
               onMouseEnter={() => onHoverGroup(seriesId)}
               onMouseLeave={() => onHoverGroup("")}
             >
-              {visibleIntervals.show95 && (
+              {intervalMode === "95" && (
                 <path
                   d={buildBandPath("lower_95", "upper_95")}
                   fill={color}
@@ -278,7 +274,7 @@ function ForecastChart({
                   <title>{`${label}: 95% prediction interval`}</title>
                 </path>
               )}
-              {visibleIntervals.show80 && (
+              {intervalMode === "80" && (
                 <path
                   d={buildBandPath("lower_80", "upper_80")}
                   fill={color}
@@ -469,10 +465,7 @@ export default function ForecastPage() {
   const [horizonMonths, setHorizonMonths] = useState(6);
   const [hoveredGroupId, setHoveredGroupId] = useState("");
   const [hoveredBreakdownId, setHoveredBreakdownId] = useState("");
-  const [visibleIntervals, setVisibleIntervals] = useState({
-    show80: false,
-    show95: false
-  });
+  const [intervalMode, setIntervalMode] = useState("point");
   const [referenceState, setReferenceState] = useState({
     loading: true,
     error: "",
@@ -602,7 +595,7 @@ export default function ForecastPage() {
   const selectedRegionLabel = level === "zone" ? zoneId : level === "state" ? stateId : dealerId;
   const rollupLabel = level === "zone" ? "All zones" : level === "state" ? "All states" : dealerId ? "Selected dealer" : "All dealers";
   const breakdownContextLabel = selectedRegionLabel || rollupLabel;
-  const shouldLoadBreakdown = !modelId && !variantId;
+  const productContextLabel = selectedVariant ? selectedVariant.name : selectedModel ? selectedModel.name : segment || "all products";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -700,15 +693,6 @@ export default function ForecastPage() {
   }, [apiFetch, level, groupId, segment, modelId, variantId]);
 
   useEffect(() => {
-    if (!shouldLoadBreakdown) {
-      setBreakdownState({
-        loading: false,
-        error: "",
-        series: []
-      });
-      return undefined;
-    }
-
     const controller = new AbortController();
 
     async function loadSegmentBreakdown() {
@@ -726,6 +710,14 @@ export default function ForecastPage() {
 
         if (segment) {
           params.set("segment", segment);
+        }
+
+        if (modelId) {
+          params.set("modelId", modelId);
+        }
+
+        if (variantId) {
+          params.set("variantId", variantId);
         }
 
         const response = await apiFetch(`/api/v1/forecasts/baseline?${params}`, {
@@ -766,7 +758,7 @@ export default function ForecastPage() {
     loadSegmentBreakdown();
 
     return () => controller.abort();
-  }, [apiFetch, groupId, level, segment, shouldLoadBreakdown]);
+  }, [apiFetch, groupId, level, segment, modelId, variantId]);
 
   const visibleSeries = useMemo(
     () => limitSeriesMonths(forecastState.series, horizonMonths),
@@ -780,9 +772,7 @@ export default function ForecastPage() {
   const chartMessage = forecastState.loading
     ? "Loading live forecast data..."
     : forecastState.error || "No forecast data is available for the selected filters.";
-  const breakdownMessage = !shouldLoadBreakdown
-    ? "Segment split is unavailable while model or variant filters are applied."
-    : breakdownState.loading
+  const breakdownMessage = breakdownState.loading
       ? "Loading regional segment breakdown..."
       : breakdownState.error || "No segment breakdown data is available for the selected scope.";
   const hasForecastData = visibleSeries.length > 0;
@@ -977,10 +967,10 @@ export default function ForecastPage() {
         </article>
         <article className="metric">
           <span>Avg uncertainty band</span>
-          <strong>{hasForecastData ? formatUnits(visibleIntervals.show95 ? avgWidth95 : avgWidth80) : "No data"}</strong>
+          <strong>{hasForecastData && intervalMode !== "point" ? formatUnits(intervalMode === "95" ? avgWidth95 : avgWidth80) : "Point only"}</strong>
           <p>
             {hasForecastData
-              ? `${visibleIntervals.show95 ? "95%" : "80%"} interval average width`
+              ? intervalMode === "point" ? "Select an interval band to view average width" : `${intervalMode}% interval average width`
               : "Intervals will appear with forecast data"}
           </p>
         </article>
@@ -1015,10 +1005,9 @@ export default function ForecastPage() {
             <div>
               <p className="eyebrow">Segment split</p>
               <h2>
-                {shouldLoadBreakdown
-                  ? `Forecast by segment for ${breakdownContextLabel}`
-                  : "Regional segment breakdown"}
+                Forecast by segment for {breakdownContextLabel}
               </h2>
+              <p className="panel-subcopy">{productContextLabel}</p>
             </div>
           </div>
           {breakdownState.error && <p className="notice compact-notice">{breakdownState.error}</p>}
@@ -1035,27 +1024,31 @@ export default function ForecastPage() {
           <div className="interval-toggle-group" aria-label="Prediction interval display options">
             <label>
               <input
-                type="checkbox"
-                checked={visibleIntervals.show80}
-                onChange={(event) =>
-                  setVisibleIntervals((current) => ({
-                    ...current,
-                    show80: event.target.checked
-                  }))
-                }
+                type="radio"
+                name="forecast-interval-mode"
+                value="point"
+                checked={intervalMode === "point"}
+                onChange={() => setIntervalMode("point")}
+              />
+              Point only
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="forecast-interval-mode"
+                value="80"
+                checked={intervalMode === "80"}
+                onChange={() => setIntervalMode("80")}
               />
               80% band
             </label>
             <label>
               <input
-                type="checkbox"
-                checked={visibleIntervals.show95}
-                onChange={(event) =>
-                  setVisibleIntervals((current) => ({
-                    ...current,
-                    show95: event.target.checked
-                  }))
-                }
+                type="radio"
+                name="forecast-interval-mode"
+                value="95"
+                checked={intervalMode === "95"}
+                onChange={() => setIntervalMode("95")}
               />
               95% band
             </label>
@@ -1071,7 +1064,7 @@ export default function ForecastPage() {
           series={visibleSeries}
           hoveredGroupId={hoveredGroupId}
           onHoverGroup={setHoveredGroupId}
-          visibleIntervals={visibleIntervals}
+          intervalMode={intervalMode}
           message={chartMessage}
         />
 
@@ -1080,11 +1073,11 @@ export default function ForecastPage() {
             <i className="legend-line forecast-line" />
             Point forecast
           </span>
-          <span className={visibleIntervals.show80 ? "" : "muted"}>
+          <span className={intervalMode === "80" ? "" : "muted"}>
             <i className="interval-swatch interval-80" />
             80% interval
           </span>
-          <span className={visibleIntervals.show95 ? "" : "muted"}>
+          <span className={intervalMode === "95" ? "" : "muted"}>
             <i className="interval-swatch interval-95" />
             95% interval
           </span>
@@ -1108,13 +1101,14 @@ export default function ForecastPage() {
       </section>
 
       <section className="forecast-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Regional segment split</p>
-              <h2>{shouldLoadBreakdown ? `Segments within ${breakdownContextLabel}` : "Model or variant filter active"}</h2>
-            </div>
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Regional segment split</p>
+            <h2>Segments within {breakdownContextLabel}</h2>
+            <p className="panel-subcopy">{productContextLabel}</p>
+          </div>
           <div className="panel-pill-group">
-            <span className="source-pill interval-context">{getBandLabel(visibleIntervals)}</span>
+            <span className="source-pill interval-context">{getBandLabel(intervalMode)}</span>
             <span className={hasBreakdownData ? "source-pill live" : "source-pill"}>
               {breakdownState.loading ? "Loading" : hasBreakdownData ? "Cached API" : "No data"}
             </span>
@@ -1127,7 +1121,7 @@ export default function ForecastPage() {
           series={visibleBreakdownSeries}
           hoveredGroupId={hoveredBreakdownId}
           onHoverGroup={setHoveredBreakdownId}
-          visibleIntervals={visibleIntervals}
+          intervalMode={intervalMode}
           message={breakdownMessage}
         />
 
@@ -1155,7 +1149,7 @@ export default function ForecastPage() {
               <p className="eyebrow">Segment breakdown</p>
               <h2>Next {horizonMonths} months for {breakdownContextLabel}</h2>
             </div>
-            <span className="source-pill interval-context">{getBandLabel(visibleIntervals)}</span>
+            <span className="source-pill interval-context">{getBandLabel(intervalMode)}</span>
           </div>
           <div className="table-scroll">
             <table>
@@ -1174,11 +1168,11 @@ export default function ForecastPage() {
                     {item.forecast.map((point) => (
                       <td key={point.month}>
                         <strong>{formatUnits(point.unitsSold)}</strong>
-                        {(visibleIntervals.show80 || visibleIntervals.show95) && (
+                        {intervalMode !== "point" && (
                           <small>
-                            {visibleIntervals.show80 && `${formatUnits(point.lower_80)}-${formatUnits(point.upper_80)}`}
-                            {visibleIntervals.show80 && visibleIntervals.show95 ? " | " : ""}
-                            {visibleIntervals.show95 && `${formatUnits(point.lower_95)}-${formatUnits(point.upper_95)}`}
+                            {intervalMode === "80"
+                              ? `${formatUnits(point.lower_80)}-${formatUnits(point.upper_80)}`
+                              : `${formatUnits(point.lower_95)}-${formatUnits(point.upper_95)}`}
                           </small>
                         )}
                       </td>
