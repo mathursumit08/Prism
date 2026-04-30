@@ -208,7 +208,8 @@ function groupForecastRows(rows, breakdown) {
       lower_80: Number(row.lower_80),
       upper_80: Number(row.upper_80),
       lower_95: Number(row.lower_95),
-      upper_95: Number(row.upper_95)
+      upper_95: Number(row.upper_95),
+      dataQuality: row.data_quality ?? "rich"
     });
   }
 
@@ -396,6 +397,7 @@ async function normalizeRows(config, rows, filters, scope) {
     upper_80: Number(row.upper_80),
     lower_95: Number(row.lower_95),
     upper_95: Number(row.upper_95),
+    dataQuality: row.data_quality ?? "rich",
     validation: {
       mae: row.validation_mae === null ? null : Number(row.validation_mae),
       mape: row.validation_mape === null ? null : Number(row.validation_mape),
@@ -496,7 +498,8 @@ function aggregateToNationalRows(rows) {
         lower_80: 0,
         upper_80: 0,
         lower_95: 0,
-        upper_95: 0
+        upper_95: 0,
+        data_quality_values: []
       });
     }
 
@@ -506,9 +509,15 @@ function aggregateToNationalRows(rows) {
     group.upper_80 += Number(row.upper_80);
     group.lower_95 += Number(row.lower_95);
     group.upper_95 += Number(row.upper_95);
+    group.data_quality_values.push(row.data_quality);
   }
 
-  return [...groups.values()].sort((left, right) => left.forecast_month.localeCompare(right.forecast_month));
+  return [...groups.values()]
+    .map(({ data_quality_values, ...row }) => ({
+      ...row,
+      data_quality: summarizeDataQuality(data_quality_values)
+    }))
+    .sort((left, right) => left.forecast_month.localeCompare(right.forecast_month));
 }
 
 function aggregateToRegionalRows(rows) {
@@ -524,7 +533,8 @@ function aggregateToRegionalRows(rows) {
         lower_80: 0,
         upper_80: 0,
         lower_95: 0,
-        upper_95: 0
+        upper_95: 0,
+        data_quality_values: []
       });
     }
 
@@ -534,15 +544,33 @@ function aggregateToRegionalRows(rows) {
     group.upper_80 += Number(row.upper_80);
     group.lower_95 += Number(row.lower_95);
     group.upper_95 += Number(row.upper_95);
+    group.data_quality_values.push(row.data_quality);
   }
 
-  return [...groups.values()].sort((left, right) => {
+  return [...groups.values()].map(({ data_quality_values, ...row }) => ({
+    ...row,
+    data_quality: summarizeDataQuality(data_quality_values)
+  })).sort((left, right) => {
     if (left.group_label === right.group_label) {
       return left.forecast_month.localeCompare(right.forecast_month);
     }
 
     return left.group_label.localeCompare(right.group_label);
   });
+}
+
+function summarizeDataQuality(values) {
+  const uniqueValues = [...new Set(values.filter(Boolean))];
+
+  if (uniqueValues.length === 0) {
+    return "rich";
+  }
+
+  if (uniqueValues.length === 1) {
+    return uniqueValues[0];
+  }
+
+  return "sparse";
 }
 
 function paginateRows(rows, page, pageSize) {

@@ -85,6 +85,20 @@ function applyPointUplift(point, eventCalendar) {
   };
 }
 
+function summarizeDataQuality(values) {
+  const uniqueValues = [...new Set(values.filter(Boolean))];
+
+  if (uniqueValues.length === 0) {
+    return "rich";
+  }
+
+  if (uniqueValues.length === 1) {
+    return uniqueValues[0];
+  }
+
+  return "sparse";
+}
+
 /**
  * Applies festive uplift rules to dealer-level forecast series.
  */
@@ -130,8 +144,10 @@ function aggregateAdjustedDealers(dealerSeries, level) {
           lower80: 0,
           upper80: 0,
           lower95: 0,
-          upper95: 0
-        }))
+          upper95: 0,
+          dataQualityValues: []
+        })),
+        dataQualityValues: []
       });
     }
 
@@ -147,10 +163,20 @@ function aggregateAdjustedDealers(dealerSeries, level) {
       aggregate.forecast[index].upper80 += point.upper80 ?? point.unitsSold;
       aggregate.forecast[index].lower95 += point.lower95 ?? point.unitsSold;
       aggregate.forecast[index].upper95 += point.upper95 ?? point.unitsSold;
+      aggregate.forecast[index].dataQualityValues.push(point.dataQuality ?? dealer.dataQuality);
     });
+
+    aggregate.dataQualityValues.push(dealer.dataQuality);
   }
 
-  return [...grouped.values()];
+  return [...grouped.values()].map((aggregate) => ({
+    ...aggregate,
+    dataQuality: summarizeDataQuality(aggregate.dataQualityValues),
+    forecast: aggregate.forecast.map(({ dataQualityValues, ...point }) => ({
+      ...point,
+      dataQuality: summarizeDataQuality(dataQualityValues)
+    }))
+  }));
 }
 
 function summarizeCalibration(summaries) {
@@ -380,7 +406,8 @@ function flattenForecast({ runId, scope, forecast }) {
           modelMethod: series.method,
           validationMae: series.validation.mae,
           validationRmse: series.validation.rmse,
-          validationMape: series.validation.mape
+          validationMape: series.validation.mape,
+          dataQuality: point.dataQuality ?? series.dataQuality ?? "rich"
         });
       }
     }

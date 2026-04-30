@@ -27,7 +27,8 @@ export const ForecastData = {
       "model_method",
       "validation_mae",
       "validation_rmse",
-      "validation_mape"
+      "validation_mape",
+      "data_quality"
     ];
 
     const values = [];
@@ -51,7 +52,8 @@ export const ForecastData = {
         record.modelMethod,
         record.validationMae,
         record.validationRmse,
-        record.validationMape
+        record.validationMape,
+        record.dataQuality ?? "rich"
       );
 
       return `(${columns.map((_column, columnIndex) => `$${offset + columnIndex + 1}`).join(", ")})`;
@@ -75,6 +77,7 @@ export const ForecastData = {
           validation_mae = EXCLUDED.validation_mae,
           validation_rmse = EXCLUDED.validation_rmse,
           validation_mape = EXCLUDED.validation_mape,
+          data_quality = EXCLUDED.data_quality,
           generated_at = NOW()
       `,
       values
@@ -280,6 +283,7 @@ async function findLatestExactRows(
         fd.validation_mae,
         fd.validation_rmse,
         fd.validation_mape,
+        fd.data_quality,
         fd.generated_at
       FROM forecast_data fd
       JOIN forecast_runs fr ON fr.run_id = fd.run_id
@@ -358,6 +362,7 @@ async function findLatestSegmentBreakdownRows(
         fd.validation_mae,
         fd.validation_rmse,
         fd.validation_mape,
+        fd.data_quality,
         fd.generated_at
       FROM forecast_data fd
       JOIN forecast_runs fr ON fr.run_id = fd.run_id

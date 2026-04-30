@@ -91,6 +91,7 @@ const forecastResponseSchema = {
           upper_80: { type: "number" },
           lower_95: { type: "number" },
           upper_95: { type: "number" },
+          dataQuality: { enum: ["rich", "sparse", "fallback"], type: "string" },
           method: { nullable: true, type: "string" },
           validation: {
             type: "object",

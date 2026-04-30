@@ -15,6 +15,8 @@ const LEVELS = {
 const DEFAULT_HORIZON = 6;
 const MAX_HORIZON = 24;
 const MIN_SERIES_LENGTH = 4;
+const DEFAULT_SPARSE_DEALER_THRESHOLD_MONTHS = 6;
+const FALLBACK_ALERT_SHARE = 0.1;
 const CALIBRATION_TOLERANCE_PERCENTAGE_POINTS = 2;
 const CALIBRATION_ADJUSTMENT_STEPS = 40;
 
@@ -28,6 +30,16 @@ function clampHorizon(value) {
   }
 
   return Math.min(Math.max(Math.trunc(parsed), 1), MAX_HORIZON);
+}
+
+function parseSparseDealerThreshold() {
+  const parsed = Number(process.env.FORECAST_SPARSE_DEALER_MONTH_THRESHOLD);
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_SPARSE_DEALER_THRESHOLD_MONTHS;
+  }
+
+  return Math.max(1, Math.trunc(parsed));
 }
 
 /**
@@ -80,6 +92,14 @@ function roundInterval(value) {
   }
 
   return Math.max(0, Math.round(value));
+}
+
+function countNonZeroActualMonths(history) {
+  return history.filter((point) => point.unitsSold > 0).length;
+}
+
+function sumUnits(history) {
+  return history.reduce((sum, point) => sum + point.unitsSold, 0);
 }
 
 /**
@@ -680,6 +700,24 @@ function buildForecastPoints(forecast, horizon, calibration) {
   });
 }
 
+function scaleForecastPoint(point, share) {
+  const scaledUnits = roundForecast(point.unitsSold * share);
+  const lower80 = Math.min(scaledUnits, roundInterval((point.lower80 ?? point.unitsSold) * share));
+  const upper80 = Math.max(scaledUnits, roundInterval((point.upper80 ?? point.unitsSold) * share));
+  const lower95 = Math.min(lower80, roundInterval((point.lower95 ?? point.unitsSold) * share));
+  const upper95 = Math.max(upper80, roundInterval((point.upper95 ?? point.unitsSold) * share));
+
+  return {
+    month: point.month,
+    unitsSold: scaledUnits,
+    lower80,
+    upper80,
+    lower95,
+    upper95,
+    dataQuality: "fallback"
+  };
+}
+
 /**
  * Selects the lowest-MAE candidate on a holdout window and refits it on full history.
  */
@@ -728,27 +766,28 @@ function fitBaseline(values, horizon) {
  * Reads monthly sales at dealer level together with state and zone metadata.
  */
 async function fetchDealerRows(filters) {
-  const conditions = [];
   const values = [];
-  let vehicleModelJoin = "";
+  const monthlyJoinConditions = ["d.dealer_id = m.dealer_id"];
 
   if (filters.segment) {
-    vehicleModelJoin = "JOIN vehicle_models vm ON vm.model_id = m.model_id";
     values.push(filters.segment);
-    conditions.push(`vm.segment = $${values.length}`);
+    monthlyJoinConditions.push(`EXISTS (
+      SELECT 1
+      FROM vehicle_models vm_filter
+      WHERE vm_filter.model_id = m.model_id
+        AND vm_filter.segment = $${values.length}
+    )`);
   }
 
   if (filters.modelId) {
     values.push(filters.modelId);
-    conditions.push(`m.model_id = $${values.length}`);
+    monthlyJoinConditions.push(`m.model_id = $${values.length}`);
   }
 
   if (filters.variantId) {
     values.push(filters.variantId);
-    conditions.push(`m.variant_id = $${values.length}`);
+    monthlyJoinConditions.push(`m.variant_id = $${values.length}`);
   }
-
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const result = await pool.query(
     `
@@ -757,13 +796,13 @@ async function fetchDealerRows(filters) {
         d.dealer_name,
         d.state,
         d.region,
+        d.sales_capacity_per_month,
         TO_CHAR(m.month, 'YYYY-MM-01') AS month,
-        SUM(m.units_sold)::INTEGER AS units_sold
-      FROM monthly_sales_data m
-      JOIN dealers d ON d.dealer_id = m.dealer_id
-      ${vehicleModelJoin}
-      ${where}
-      GROUP BY d.dealer_id, d.dealer_name, d.state, d.region, m.month
+        COALESCE(SUM(m.units_sold), 0)::INTEGER AS units_sold
+      FROM dealers d
+      LEFT JOIN monthly_sales_data m
+        ON ${monthlyJoinConditions.join(" AND ")}
+      GROUP BY d.dealer_id, d.dealer_name, d.state, d.region, d.sales_capacity_per_month, m.month
       ORDER BY d.dealer_id, m.month
     `,
     values
@@ -780,7 +819,19 @@ function buildDealerSeries(rows) {
     return [];
   }
 
-  const months = [...new Set(rows.map((row) => row.month))].sort();
+  const months = [...new Set(rows.map((row) => row.month).filter(Boolean))].sort();
+
+  if (months.length === 0) {
+    return rows.map((row) => ({
+      dealerId: row.dealer_id,
+      dealerName: row.dealer_name,
+      state: row.state,
+      zone: row.region,
+      salesCapacityPerMonth: Number(row.sales_capacity_per_month ?? 0),
+      history: []
+    }));
+  }
+
   const allMonths = buildMonthRange(months[0], months[months.length - 1]);
   const groups = new Map();
 
@@ -791,11 +842,14 @@ function buildDealerSeries(rows) {
         dealerName: row.dealer_name,
         state: row.state,
         zone: row.region,
+        salesCapacityPerMonth: Number(row.sales_capacity_per_month ?? 0),
         valuesByMonth: new Map()
       });
     }
 
-    groups.get(row.dealer_id).valuesByMonth.set(row.month, Number(row.units_sold));
+    if (row.month) {
+      groups.get(row.dealer_id).valuesByMonth.set(row.month, Number(row.units_sold));
+    }
   }
 
   return [...groups.values()].map((group) => ({
@@ -803,10 +857,89 @@ function buildDealerSeries(rows) {
     dealerName: group.dealerName,
     state: group.state,
     zone: group.zone,
+    salesCapacityPerMonth: group.salesCapacityPerMonth,
     history: allMonths.map((month) => ({
       month,
       unitsSold: group.valuesByMonth.get(month) ?? 0
     }))
+  }));
+}
+
+function buildZoneFallbacks(dealerSeries, horizon) {
+  const zones = new Map();
+
+  for (const series of dealerSeries) {
+    if (!zones.has(series.zone)) {
+      zones.set(series.zone, {
+        history: series.history.map((point) => ({
+          month: point.month,
+          unitsSold: 0
+        }))
+      });
+    }
+
+    const zone = zones.get(series.zone);
+    series.history.forEach((point, index) => {
+      zone.history[index].unitsSold += point.unitsSold;
+    });
+  }
+
+  const fallbacks = new Map();
+
+  for (const [zone, series] of zones.entries()) {
+    const values = series.history.map((point) => point.unitsSold);
+    const fitted = fitBaseline(values, horizon);
+    const lastMonth = series.history[series.history.length - 1]?.month;
+
+    if (!lastMonth) {
+      continue;
+    }
+
+    fallbacks.set(zone, {
+      method: fitted.method,
+      validation: fitted.validation,
+      calibration: fitted.calibration,
+      forecast: (fitted.intervalForecast ?? buildForecastPoints(fitted.forecast, horizon, {
+        residual80: fitted.intervalResiduals ?? Array(horizon).fill(0),
+        residual95: fitted.calibrationResiduals95 ?? fitted.intervalResiduals ?? Array(horizon).fill(0)
+      })).map((point, index) => ({
+        month: addMonths(lastMonth, index + 1),
+        ...point
+      }))
+    });
+  }
+
+  return fallbacks;
+}
+
+function buildFallbackShares(dealerSeries) {
+  const zoneTotals = new Map();
+  const zoneCapacities = new Map();
+  const zoneDealerCounts = new Map();
+
+  for (const series of dealerSeries) {
+    zoneTotals.set(series.zone, (zoneTotals.get(series.zone) ?? 0) + sumUnits(series.history));
+    zoneCapacities.set(
+      series.zone,
+      (zoneCapacities.get(series.zone) ?? 0) + Math.max(0, series.salesCapacityPerMonth)
+    );
+    zoneDealerCounts.set(series.zone, (zoneDealerCounts.get(series.zone) ?? 0) + 1);
+  }
+
+  return new Map(dealerSeries.map((series) => {
+    const dealerTotal = sumUnits(series.history);
+    const zoneTotal = zoneTotals.get(series.zone) ?? 0;
+
+    if (dealerTotal > 0 && zoneTotal > 0) {
+      return [series.dealerId, dealerTotal / zoneTotal];
+    }
+
+    const zoneCapacity = zoneCapacities.get(series.zone) ?? 0;
+    if (series.salesCapacityPerMonth > 0 && zoneCapacity > 0) {
+      return [series.dealerId, series.salesCapacityPerMonth / zoneCapacity];
+    }
+
+    return [series.dealerId, 1 / Math.max(zoneDealerCounts.get(series.zone) ?? 1, 1)];
   }));
 }
 
@@ -815,11 +948,71 @@ function buildDealerSeries(rows) {
  */
 async function forecastDealers(horizon, filters) {
   const rows = await fetchDealerRows(filters);
+  const sparseDealerThreshold = parseSparseDealerThreshold();
+  const dealerSeries = buildDealerSeries(rows);
+  const zoneFallbacks = buildZoneFallbacks(dealerSeries, horizon);
+  const fallbackShares = buildFallbackShares(dealerSeries);
+  let fallbackCount = 0;
 
-  return buildDealerSeries(rows).map((series) => {
+  const forecasts = dealerSeries.map((series) => {
     const values = series.history.map((point) => point.unitsSold);
-    const fitted = fitBaseline(values, horizon);
+    const nonZeroActualMonths = countNonZeroActualMonths(series.history);
     const lastMonth = series.history[series.history.length - 1]?.month;
+
+    if (nonZeroActualMonths < sparseDealerThreshold) {
+      const zoneFallback = zoneFallbacks.get(series.zone);
+      const share = fallbackShares.get(series.dealerId) ?? 0;
+
+      if (zoneFallback) {
+        fallbackCount += 1;
+
+        return {
+          level: "dealer",
+          groupId: series.dealerId,
+          groupLabel: series.dealerName,
+          state: series.state,
+          zone: series.zone,
+          method: `zone-proportional-fallback(${zoneFallback.method})`,
+          dataQuality: "fallback",
+          validation: {
+            mae: null,
+            rmse: null,
+            mape: null
+          },
+          calibration: buildEmptyCalibration(horizon),
+          history: series.history,
+          forecast: zoneFallback.forecast.map((point) => scaleForecastPoint(point, share))
+        };
+      }
+
+      const fittedSparse = fitBaseline(values, horizon);
+      const sparseForecastPoints = lastMonth
+        ? (fittedSparse.intervalForecast ?? buildForecastPoints(fittedSparse.forecast, horizon, {
+          residual80: fittedSparse.intervalResiduals ?? Array(horizon).fill(0),
+          residual95: fittedSparse.calibrationResiduals95 ?? fittedSparse.intervalResiduals ?? Array(horizon).fill(0)
+        })).map((point, index) => ({
+          month: addMonths(lastMonth, index + 1),
+          ...point,
+          dataQuality: "sparse"
+        }))
+        : [];
+
+      return {
+        level: "dealer",
+        groupId: series.dealerId,
+        groupLabel: series.dealerName,
+        state: series.state,
+        zone: series.zone,
+        method: fittedSparse.method,
+        dataQuality: "sparse",
+        validation: fittedSparse.validation,
+        calibration: fittedSparse.calibration,
+        history: series.history,
+        forecast: sparseForecastPoints
+      };
+    }
+
+    const fitted = fitBaseline(values, horizon);
 
     return {
       level: "dealer",
@@ -828,6 +1021,7 @@ async function forecastDealers(horizon, filters) {
       state: series.state,
       zone: series.zone,
       method: fitted.method,
+      dataQuality: "rich",
       validation: fitted.validation,
       calibration: fitted.calibration,
       history: series.history,
@@ -836,10 +1030,33 @@ async function forecastDealers(horizon, filters) {
         residual95: fitted.calibrationResiduals95 ?? fitted.intervalResiduals ?? Array(horizon).fill(0)
       })).map((point, index) => ({
         month: addMonths(lastMonth, index + 1),
-        ...point
+        ...point,
+        dataQuality: "rich"
       }))
     };
   });
+
+  if (forecasts.length > 0 && fallbackCount / forecasts.length > FALLBACK_ALERT_SHARE) {
+    console.warn(
+      `Sparse dealer fallback alert: ${fallbackCount}/${forecasts.length} dealers (${((fallbackCount / forecasts.length) * 100).toFixed(1)}%) used zone-level fallback`
+    );
+  }
+
+  return forecasts;
+}
+
+function summarizeDataQuality(values) {
+  const uniqueValues = [...new Set(values.filter(Boolean))];
+
+  if (uniqueValues.length === 0) {
+    return "rich";
+  }
+
+  if (uniqueValues.length === 1) {
+    return uniqueValues[0];
+  }
+
+  return "sparse";
 }
 
 /**
@@ -872,8 +1089,10 @@ function aggregateFromDealers(dealerSeries, level) {
           lower80: 0,
           upper80: 0,
           lower95: 0,
-          upper95: 0
-        }))
+          upper95: 0,
+          dataQualityValues: []
+        })),
+        dataQualityValues: []
       });
     }
 
@@ -889,10 +1108,20 @@ function aggregateFromDealers(dealerSeries, level) {
       aggregate.forecast[index].upper80 += point.upper80;
       aggregate.forecast[index].lower95 += point.lower95;
       aggregate.forecast[index].upper95 += point.upper95;
+      aggregate.forecast[index].dataQualityValues.push(point.dataQuality ?? dealer.dataQuality);
     });
+
+    aggregate.dataQualityValues.push(dealer.dataQuality);
   }
 
-  return [...grouped.values()];
+  return [...grouped.values()].map((aggregate) => ({
+    ...aggregate,
+    dataQuality: summarizeDataQuality(aggregate.dataQualityValues),
+    forecast: aggregate.forecast.map(({ dataQualityValues, ...point }) => ({
+      ...point,
+      dataQuality: summarizeDataQuality(dataQualityValues)
+    }))
+  }));
 }
 
 /**

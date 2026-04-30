@@ -139,3 +139,4 @@ baseline forecast every night at 12:00 AM India time.
 - The backend uses a PostgreSQL connection pool through the `pg` package.
 - When running the API in Docker, `DATABASE_URL` uses the Compose service hostname `postgres`.
 - When running the API locally, `DATABASE_URL` should use `localhost`.
+- `FORECAST_SPARSE_DEALER_MONTH_THRESHOLD` controls when dealer forecasts fall back to zone-level distribution. The default is `6` non-zero actual months.
