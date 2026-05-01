@@ -10,6 +10,7 @@ import {
   getBaselineForecastPayload,
   getVersionedForecastPayload
 } from "../../services/forecastQueryService.js";
+import { getForecastMetricsPayload } from "../../services/forecastMetricsService.js";
 
 const router = Router();
 
@@ -21,6 +22,10 @@ router.get("/baseline", requirePermission(permissions.viewForecast), async (requ
 
 router.get("/actuals", requirePermission(permissions.viewForecast), async (request, response) => {
   await respondWithServiceCall(response, () => getActualsPayload(request.user, request.query));
+});
+
+router.get("/metrics", requirePermission(permissions.viewForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getForecastMetricsPayload(request.user, request.query));
 });
 
 router.get("/dealer-targets", requirePermission(permissions.viewForecast), async (request, response) => {

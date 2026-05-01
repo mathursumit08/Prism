@@ -94,6 +94,14 @@ function roundInterval(value) {
   return Math.max(0, Math.round(value));
 }
 
+function roundCorrection(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 1;
+  }
+
+  return Number(value.toFixed(6));
+}
+
 function countNonZeroActualMonths(history) {
   return history.filter((point) => point.unitsSold > 0).length;
 }
@@ -718,6 +726,38 @@ function scaleForecastPoint(point, share) {
   };
 }
 
+function applyBiasCorrection(point, correction) {
+  const factor = roundCorrection(correction);
+  const adjustedUnits = roundForecast(point.unitsSold * factor);
+  const delta = adjustedUnits - point.unitsSold;
+  const lower80 = Math.min(adjustedUnits, roundInterval((point.lower80 ?? point.unitsSold) + delta));
+  const upper80 = Math.max(adjustedUnits, roundInterval((point.upper80 ?? point.unitsSold) + delta));
+  const lower95 = Math.min(lower80, roundInterval((point.lower95 ?? point.unitsSold) + delta));
+  const upper95 = Math.max(upper80, roundInterval((point.upper95 ?? point.unitsSold) + delta));
+
+  return {
+    ...point,
+    unitsSold: adjustedUnits,
+    lower80,
+    upper80,
+    lower95,
+    upper95,
+    biasCorrection: factor
+  };
+}
+
+function getBiasCorrection(series, biasCorrections) {
+  if (!biasCorrections) {
+    return 1;
+  }
+
+  return roundCorrection(
+    biasCorrections.get(`dealer:${series.dealerId}`) ??
+    biasCorrections.get(`zone:${series.zone}`) ??
+    1
+  );
+}
+
 /**
  * Selects the lowest-MAE candidate on a holdout window and refits it on full history.
  */
@@ -787,6 +827,11 @@ async function fetchDealerRows(filters) {
   if (filters.variantId) {
     values.push(filters.variantId);
     monthlyJoinConditions.push(`m.variant_id = $${values.length}`);
+  }
+
+  if (filters.historyEndMonth) {
+    values.push(filters.historyEndMonth);
+    monthlyJoinConditions.push(`m.month <= $${values.length}::DATE`);
   }
 
   const result = await pool.query(
@@ -946,7 +991,7 @@ function buildFallbackShares(dealerSeries) {
 /**
  * Generates dealer-level forecasts that will be rolled up into state and zone totals.
  */
-async function forecastDealers(horizon, filters) {
+async function forecastDealers(horizon, filters, biasCorrections) {
   const rows = await fetchDealerRows(filters);
   const sparseDealerThreshold = parseSparseDealerThreshold();
   const dealerSeries = buildDealerSeries(rows);
@@ -958,6 +1003,7 @@ async function forecastDealers(horizon, filters) {
     const values = series.history.map((point) => point.unitsSold);
     const nonZeroActualMonths = countNonZeroActualMonths(series.history);
     const lastMonth = series.history[series.history.length - 1]?.month;
+    const biasCorrection = getBiasCorrection(series, biasCorrections);
 
     if (nonZeroActualMonths < sparseDealerThreshold) {
       const zoneFallback = zoneFallbacks.get(series.zone);
@@ -974,6 +1020,7 @@ async function forecastDealers(horizon, filters) {
           zone: series.zone,
           method: `zone-proportional-fallback(${zoneFallback.method})`,
           dataQuality: "fallback",
+          biasCorrection,
           validation: {
             mae: null,
             rmse: null,
@@ -981,7 +1028,9 @@ async function forecastDealers(horizon, filters) {
           },
           calibration: buildEmptyCalibration(horizon),
           history: series.history,
-          forecast: zoneFallback.forecast.map((point) => scaleForecastPoint(point, share))
+          forecast: zoneFallback.forecast
+            .map((point) => scaleForecastPoint(point, share))
+            .map((point) => applyBiasCorrection(point, biasCorrection))
         };
       }
 
@@ -994,7 +1043,7 @@ async function forecastDealers(horizon, filters) {
           month: addMonths(lastMonth, index + 1),
           ...point,
           dataQuality: "sparse"
-        }))
+        })).map((point) => applyBiasCorrection(point, biasCorrection))
         : [];
 
       return {
@@ -1005,6 +1054,7 @@ async function forecastDealers(horizon, filters) {
         zone: series.zone,
         method: fittedSparse.method,
         dataQuality: "sparse",
+        biasCorrection,
         validation: fittedSparse.validation,
         calibration: fittedSparse.calibration,
         history: series.history,
@@ -1022,6 +1072,7 @@ async function forecastDealers(horizon, filters) {
       zone: series.zone,
       method: fitted.method,
       dataQuality: "rich",
+      biasCorrection,
       validation: fitted.validation,
       calibration: fitted.calibration,
       history: series.history,
@@ -1032,7 +1083,7 @@ async function forecastDealers(horizon, filters) {
         month: addMonths(lastMonth, index + 1),
         ...point,
         dataQuality: "rich"
-      }))
+      })).map((point) => applyBiasCorrection(point, biasCorrection))
     };
   });
 
@@ -1057,6 +1108,32 @@ function summarizeDataQuality(values) {
   }
 
   return "sparse";
+}
+
+function retargetForecastMonths(series, forecastStartMonth) {
+  if (!forecastStartMonth) {
+    return series;
+  }
+
+  return {
+    ...series,
+    forecast: series.forecast.map((point, index) => ({
+      ...point,
+      month: addMonths(forecastStartMonth, index)
+    }))
+  };
+}
+
+function summarizeBiasCorrection(points) {
+  const totalUnits = points.reduce((sum, point) => sum + point.unitsSold, 0);
+
+  if (totalUnits > 0) {
+    return roundCorrection(
+      points.reduce((sum, point) => sum + (point.biasCorrection ?? 1) * point.unitsSold, 0) / totalUnits
+    );
+  }
+
+  return roundCorrection(mean(points.map((point) => point.biasCorrection ?? 1)));
 }
 
 /**
@@ -1090,7 +1167,8 @@ function aggregateFromDealers(dealerSeries, level) {
           upper80: 0,
           lower95: 0,
           upper95: 0,
-          dataQualityValues: []
+          dataQualityValues: [],
+          biasCorrectionPoints: []
         })),
         dataQualityValues: []
       });
@@ -1109,6 +1187,7 @@ function aggregateFromDealers(dealerSeries, level) {
       aggregate.forecast[index].lower95 += point.lower95;
       aggregate.forecast[index].upper95 += point.upper95;
       aggregate.forecast[index].dataQualityValues.push(point.dataQuality ?? dealer.dataQuality);
+      aggregate.forecast[index].biasCorrectionPoints.push(point);
     });
 
     aggregate.dataQualityValues.push(dealer.dataQuality);
@@ -1117,9 +1196,11 @@ function aggregateFromDealers(dealerSeries, level) {
   return [...grouped.values()].map((aggregate) => ({
     ...aggregate,
     dataQuality: summarizeDataQuality(aggregate.dataQualityValues),
-    forecast: aggregate.forecast.map(({ dataQualityValues, ...point }) => ({
+    biasCorrection: summarizeBiasCorrection(aggregate.forecast.flatMap((point) => point.biasCorrectionPoints)),
+    forecast: aggregate.forecast.map(({ dataQualityValues, biasCorrectionPoints, ...point }) => ({
       ...point,
-      dataQuality: summarizeDataQuality(dataQualityValues)
+      dataQuality: summarizeDataQuality(dataQualityValues),
+      biasCorrection: summarizeBiasCorrection(biasCorrectionPoints)
     }))
   }));
 }
@@ -1127,7 +1208,16 @@ function aggregateFromDealers(dealerSeries, level) {
 /**
  * Public entry point for producing dealerwise, statewise, zonewise, or all forecasts.
  */
-export async function buildBaselineForecast({ level = "all", horizon, segment, modelId, variantId } = {}) {
+export async function buildBaselineForecast({
+  level = "all",
+  horizon,
+  segment,
+  modelId,
+  variantId,
+  historyEndMonth,
+  forecastStartMonth,
+  biasCorrections
+} = {}) {
   const safeHorizon = clampHorizon(horizon);
   const requestedLevels = level === "all" ? Object.keys(LEVELS) : [level];
 
@@ -1140,10 +1230,12 @@ export async function buildBaselineForecast({ level = "all", horizon, segment, m
   const filters = {
     segment,
     modelId,
-    variantId
+    variantId,
+    historyEndMonth
   };
 
-  const dealerSeries = await forecastDealers(safeHorizon, filters);
+  const dealerSeries = (await forecastDealers(safeHorizon, filters, biasCorrections))
+    .map((series) => retargetForecastMonths(series, forecastStartMonth));
   const levelSeries = {
     dealer: dealerSeries,
     state: aggregateFromDealers(dealerSeries, "state"),

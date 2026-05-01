@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { buildBaselineForecast } from "../forecasting/baselineForecast.js";
 import { ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
 import { ForecastCacheService } from "../services/forecastCacheService.js";
+import { ForecastBiasService } from "../services/forecastBiasService.js";
 
 dotenv.config();
 
@@ -99,6 +100,30 @@ function summarizeDataQuality(values) {
   return "sparse";
 }
 
+function roundCorrection(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 1;
+  }
+
+  return Number(value.toFixed(6));
+}
+
+function summarizeBiasCorrection(points) {
+  const totalUnits = points.reduce((sum, point) => sum + point.unitsSold, 0);
+
+  if (totalUnits > 0) {
+    return roundCorrection(
+      points.reduce((sum, point) => sum + (point.biasCorrection ?? 1) * point.unitsSold, 0) / totalUnits
+    );
+  }
+
+  if (points.length === 0) {
+    return 1;
+  }
+
+  return roundCorrection(points.reduce((sum, point) => sum + (point.biasCorrection ?? 1), 0) / points.length);
+}
+
 /**
  * Applies festive uplift rules to dealer-level forecast series.
  */
@@ -145,7 +170,8 @@ function aggregateAdjustedDealers(dealerSeries, level) {
           upper80: 0,
           lower95: 0,
           upper95: 0,
-          dataQualityValues: []
+          dataQualityValues: [],
+          biasCorrectionPoints: []
         })),
         dataQualityValues: []
       });
@@ -164,6 +190,7 @@ function aggregateAdjustedDealers(dealerSeries, level) {
       aggregate.forecast[index].lower95 += point.lower95 ?? point.unitsSold;
       aggregate.forecast[index].upper95 += point.upper95 ?? point.unitsSold;
       aggregate.forecast[index].dataQualityValues.push(point.dataQuality ?? dealer.dataQuality);
+      aggregate.forecast[index].biasCorrectionPoints.push(point);
     });
 
     aggregate.dataQualityValues.push(dealer.dataQuality);
@@ -172,9 +199,11 @@ function aggregateAdjustedDealers(dealerSeries, level) {
   return [...grouped.values()].map((aggregate) => ({
     ...aggregate,
     dataQuality: summarizeDataQuality(aggregate.dataQualityValues),
-    forecast: aggregate.forecast.map(({ dataQualityValues, ...point }) => ({
+    biasCorrection: summarizeBiasCorrection(aggregate.forecast.flatMap((point) => point.biasCorrectionPoints)),
+    forecast: aggregate.forecast.map(({ dataQualityValues, biasCorrectionPoints, ...point }) => ({
       ...point,
-      dataQuality: summarizeDataQuality(dataQualityValues)
+      dataQuality: summarizeDataQuality(dataQualityValues),
+      biasCorrection: summarizeBiasCorrection(biasCorrectionPoints)
     }))
   }));
 }
@@ -377,6 +406,24 @@ async function fetchEventCalendar(db = pool) {
   );
 }
 
+async function fetchLatestActualMonth(db = pool) {
+  const result = await db.query(`
+    SELECT TO_CHAR(MAX(month), 'YYYY-MM-01') AS latest_actual_month
+    FROM monthly_sales_data
+  `);
+
+  return result.rows[0]?.latest_actual_month ?? null;
+}
+
+function addMonths(month, offset) {
+  const date = new Date(`${month}T00:00:00.000Z`);
+  date.setUTCMonth(date.getUTCMonth() + offset);
+  const year = date.getUTCFullYear();
+  const nextMonth = String(date.getUTCMonth() + 1).padStart(2, "0");
+
+  return `${year}-${nextMonth}-01`;
+}
+
 /**
  * Converts nested forecast output into rows that match the forecast_data table.
  */
@@ -407,7 +454,8 @@ function flattenForecast({ runId, scope, forecast }) {
           validationMae: series.validation.mae,
           validationRmse: series.validation.rmse,
           validationMape: series.validation.mape,
-          dataQuality: point.dataQuality ?? series.dataQuality ?? "rich"
+          dataQuality: point.dataQuality ?? series.dataQuality ?? "rich",
+          biasCorrection: point.biasCorrection ?? series.biasCorrection ?? 1
         });
       }
     }
@@ -468,7 +516,7 @@ async function insertInBatches(records, db = pool) {
 /**
  * Deletes any previously stored rows that are no longer present in the current rerun output.
  */
-async function removeIrrelevantRows(records, db) {
+async function removeIrrelevantRows(records, db, latestActualMonth) {
   const currentKeys = new Set(
     records.map((record) =>
       buildForecastKey({
@@ -486,6 +534,7 @@ async function removeIrrelevantRows(records, db) {
   const idsToDelete = existingRows
     .filter(
       (row) =>
+        (!latestActualMonth || row.forecast_month > latestActualMonth) &&
         !currentKeys.has(
           buildForecastKey({
             forecastType: row.forecast_type,
@@ -549,12 +598,16 @@ export async function runForecastWorker({
     reportProgress(onProgress, {
       stage: "loading-source-data",
       stageLabel: "Loading source data",
-      message: "Loading monthly sales history and event rules.",
+      message: "Loading monthly sales history, bias corrections, and event rules.",
       runId: run.run_id
     });
 
+    const initialBiasSummary = await ForecastBiasService.computeAndStore({ windowMonths: 6 }, client);
+    const biasCorrections = await ForecastBiasService.findCorrectionMap(client);
     const scopes = await fetchForecastScopes(client);
     const eventCalendar = await fetchEventCalendar(client);
+    const latestActualMonth = await fetchLatestActualMonth(client);
+    const actualizedHistoryEndMonth = latestActualMonth ? addMonths(latestActualMonth, -1) : null;
     const allRecords = [];
     const allCalibrationSummaries = [];
     reportProgress(onProgress, {
@@ -572,12 +625,31 @@ export async function runForecastWorker({
         horizon,
         segment: scope.segment,
         modelId: scope.modelId,
-        variantId: scope.variantId
+        variantId: scope.variantId,
+        biasCorrections
       });
+      const actualizedDealerForecast = latestActualMonth
+        ? await buildBaselineForecast({
+          level: "dealer",
+          horizon: 1,
+          segment: scope.segment,
+          modelId: scope.modelId,
+          variantId: scope.variantId,
+          historyEndMonth: actualizedHistoryEndMonth,
+          forecastStartMonth: latestActualMonth,
+          biasCorrections
+        })
+        : null;
       const adjustedForecast = {
         ...dealerForecast,
         levels: buildAdjustedForecastLevels(dealerForecast.levels[0]?.series ?? [], eventCalendar)
       };
+      const actualizedAdjustedForecast = actualizedDealerForecast
+        ? {
+          ...actualizedDealerForecast,
+          levels: buildAdjustedForecastLevels(actualizedDealerForecast.levels[0]?.series ?? [], eventCalendar)
+        }
+        : null;
 
       allRecords.push(
         ...flattenForecast({
@@ -586,6 +658,16 @@ export async function runForecastWorker({
           forecast: adjustedForecast
         })
       );
+
+      if (actualizedAdjustedForecast) {
+        allRecords.push(
+          ...flattenForecast({
+            runId: run.run_id,
+            scope,
+            forecast: actualizedAdjustedForecast
+          })
+        );
+      }
       allCalibrationSummaries.push(
         ...collectCalibrationSummaries({
           scope,
@@ -612,7 +694,8 @@ export async function runForecastWorker({
       processedScopes: scopes.length
     });
     const inserted = await insertInBatches(allRecords, client);
-    const removed = await removeIrrelevantRows(allRecords, client);
+    const removed = await removeIrrelevantRows(allRecords, client, latestActualMonth);
+    const biasSummary = await ForecastBiasService.computeAndStore({ windowMonths: 6 }, client);
     const calibration = summarizeCalibration(allCalibrationSummaries);
     assertCalibrationWithinTolerance(calibration);
     const completedRun = await ForecastRun.complete(run.run_id, calibration, client);
@@ -626,6 +709,8 @@ export async function runForecastWorker({
       inserted,
       removed,
       calibration,
+      initialBiasSummary,
+      biasSummary,
       totalScopes: scopes.length,
       processedScopes: scopes.length
     });
@@ -639,6 +724,8 @@ export async function runForecastWorker({
       runId: completedRun.run_id,
       inserted,
       removed,
+      initialBiasSummary,
+      biasSummary,
       scopes: scopes.length
     };
   } catch (error) {

@@ -209,7 +209,8 @@ function groupForecastRows(rows, breakdown) {
       upper_80: Number(row.upper_80),
       lower_95: Number(row.lower_95),
       upper_95: Number(row.upper_95),
-      dataQuality: row.data_quality ?? "rich"
+      dataQuality: row.data_quality ?? "rich",
+      biasCorrection: Number(row.bias_correction ?? 1)
     });
   }
 
@@ -398,6 +399,7 @@ async function normalizeRows(config, rows, filters, scope) {
     lower_95: Number(row.lower_95),
     upper_95: Number(row.upper_95),
     dataQuality: row.data_quality ?? "rich",
+    biasCorrection: Number(row.bias_correction ?? 1),
     validation: {
       mae: row.validation_mae === null ? null : Number(row.validation_mae),
       mape: row.validation_mape === null ? null : Number(row.validation_mape),
@@ -499,7 +501,8 @@ function aggregateToNationalRows(rows) {
         upper_80: 0,
         lower_95: 0,
         upper_95: 0,
-        data_quality_values: []
+        data_quality_values: [],
+        bias_correction_values: []
       });
     }
 
@@ -510,12 +513,14 @@ function aggregateToNationalRows(rows) {
     group.lower_95 += Number(row.lower_95);
     group.upper_95 += Number(row.upper_95);
     group.data_quality_values.push(row.data_quality);
+    group.bias_correction_values.push(Number(row.bias_correction ?? 1));
   }
 
   return [...groups.values()]
-    .map(({ data_quality_values, ...row }) => ({
+    .map(({ data_quality_values, bias_correction_values, ...row }) => ({
       ...row,
-      data_quality: summarizeDataQuality(data_quality_values)
+      data_quality: summarizeDataQuality(data_quality_values),
+      bias_correction: averageBiasCorrection(bias_correction_values)
     }))
     .sort((left, right) => left.forecast_month.localeCompare(right.forecast_month));
 }
@@ -534,7 +539,8 @@ function aggregateToRegionalRows(rows) {
         upper_80: 0,
         lower_95: 0,
         upper_95: 0,
-        data_quality_values: []
+        data_quality_values: [],
+        bias_correction_values: []
       });
     }
 
@@ -545,11 +551,13 @@ function aggregateToRegionalRows(rows) {
     group.lower_95 += Number(row.lower_95);
     group.upper_95 += Number(row.upper_95);
     group.data_quality_values.push(row.data_quality);
+    group.bias_correction_values.push(Number(row.bias_correction ?? 1));
   }
 
-  return [...groups.values()].map(({ data_quality_values, ...row }) => ({
+  return [...groups.values()].map(({ data_quality_values, bias_correction_values, ...row }) => ({
     ...row,
-    data_quality: summarizeDataQuality(data_quality_values)
+    data_quality: summarizeDataQuality(data_quality_values),
+    bias_correction: averageBiasCorrection(bias_correction_values)
   })).sort((left, right) => {
     if (left.group_label === right.group_label) {
       return left.forecast_month.localeCompare(right.forecast_month);
@@ -571,6 +579,16 @@ function summarizeDataQuality(values) {
   }
 
   return "sparse";
+}
+
+function averageBiasCorrection(values) {
+  const finiteValues = values.filter(Number.isFinite);
+
+  if (finiteValues.length === 0) {
+    return 1;
+  }
+
+  return Number((finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length).toFixed(6));
 }
 
 function paginateRows(rows, page, pageSize) {
