@@ -38,40 +38,51 @@ function buildForecastKey({
   ].join("|");
 }
 
-/**
- * Returns the month number for a YYYY-MM-01 string using UTC.
- */
-function getMonthNumber(month) {
-  return new Date(`${month}T00:00:00.000Z`).getUTCMonth() + 1;
+function getMonthRange(month) {
+  const start = new Date(`${month}T00:00:00.000Z`);
+  const end = new Date(start);
+  end.setUTCMonth(end.getUTCMonth() + 1);
+  end.setUTCDate(0);
+
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10)
+  };
 }
 
 /**
- * Checks whether a month falls inside an inclusive recurring festive window.
+ * Returns the active event rules that apply to the provided forecast point and dealer scope.
  */
-function monthFallsInWindow(monthNumber, startMonth, endMonth) {
-  if (startMonth <= endMonth) {
-    return monthNumber >= startMonth && monthNumber <= endMonth;
-  }
+function findMatchingEvents(point, dealer, eventCalendar) {
+  const monthRange = getMonthRange(point.month);
 
-  return monthNumber >= startMonth || monthNumber <= endMonth;
+  return eventCalendar.filter((event) => {
+    const overlapsForecastMonth = event.start_date <= monthRange.end && event.end_date >= monthRange.start;
+    if (!overlapsForecastMonth) {
+      return false;
+    }
+
+    if (event.scope === "national") {
+      return true;
+    }
+
+    if (event.scope === "zone") {
+      return event.scope_value === dealer.zone;
+    }
+
+    if (event.scope === "state") {
+      return event.scope_value === dealer.state;
+    }
+
+    return false;
+  });
 }
 
 /**
- * Returns the active festive-event rules that apply to the provided forecast month.
+ * Applies the configured event uplift to a single forecast point.
  */
-function findMatchingEvents(month, eventCalendar) {
-  const monthNumber = getMonthNumber(month);
-
-  return eventCalendar.filter((event) =>
-    monthFallsInWindow(monthNumber, Number(event.start_month), Number(event.end_month))
-  );
-}
-
-/**
- * Applies the configured festive uplift to a single forecast point.
- */
-function applyPointUplift(point, eventCalendar) {
-  const matchingEvents = findMatchingEvents(point.month, eventCalendar);
+function applyPointUplift(point, dealer, eventCalendar) {
+  const matchingEvents = findMatchingEvents(point, dealer, eventCalendar);
   const totalUpliftPct = matchingEvents.reduce((sum, event) => sum + Number(event.uplift_pct), 0);
   const upliftFactor = 1 + totalUpliftPct / 100;
   const upliftedUnitsSold = Math.max(0, Math.round(point.unitsSold * upliftFactor));
@@ -125,7 +136,7 @@ function summarizeBiasCorrection(points) {
 }
 
 /**
- * Applies festive uplift rules to dealer-level forecast series.
+ * Applies event uplift rules to dealer-level forecast series.
  */
 function applyEventUpliftsToDealerSeries(dealerSeries, eventCalendar) {
   if (eventCalendar.length === 0) {
@@ -135,7 +146,7 @@ function applyEventUpliftsToDealerSeries(dealerSeries, eventCalendar) {
   return dealerSeries.map((series) => ({
     ...series,
     method: `${series.method} + event-uplift`,
-    forecast: series.forecast.map((point) => applyPointUplift(point, eventCalendar))
+    forecast: series.forecast.map((point) => applyPointUplift(point, series, eventCalendar))
   }));
 }
 
@@ -299,7 +310,7 @@ function mean(values) {
 }
 
 /**
- * Builds the final dealer, state, and zone output after festive uplifts are applied.
+ * Builds the final dealer, state, and zone output after event uplifts are applied.
  */
 function buildAdjustedForecastLevels(dealerSeries, eventCalendar) {
   const adjustedDealers = applyEventUpliftsToDealerSeries(dealerSeries, eventCalendar);
@@ -395,7 +406,7 @@ async function fetchForecastScopes(db = pool) {
 }
 
 /**
- * Loads all active festive-event uplift rules used during the current refresh.
+ * Loads all active event uplift rules used during the current refresh.
  */
 async function fetchEventCalendar(db = pool) {
   return ForecastEventCalendar.findActive(

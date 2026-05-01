@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Forecast from "./pages/Forecast.jsx";
-import Admin from "./pages/Admin.jsx";
+import ManageForecast from "./pages/ManageForecast.jsx";
+import ForecastEvents from "./pages/ForecastEvents.jsx";
 import LoginPage from "./pages/Login.jsx";
 import { useAuth } from "./auth/AuthContext.jsx";
 
@@ -11,6 +12,10 @@ function resolvePageFromHash(hash) {
 
   if (hash === "#admin") {
     return "admin";
+  }
+
+  if (hash === "#forecast-events") {
+    return "forecast-events";
   }
 
   return "home";
@@ -46,6 +51,7 @@ function HomePage({ onPrimaryAction, user }) {
 export default function App() {
   const { booting, isAuthenticated, logout, user } = useAuth();
   const [page, setPage] = useState(() => resolvePageFromHash(window.location.hash));
+  const [manageMenuOpen, setManageMenuOpen] = useState(false);
   const canViewForecast = user?.permissions?.includes("View Forecast");
   const canManageForecast = user?.permissions?.includes("Manage Forecast");
 
@@ -59,7 +65,14 @@ export default function App() {
   }, []);
 
   function navigate(nextPage) {
-    window.location.hash = nextPage === "forecast" ? "forecast" : nextPage === "admin" ? "admin" : "home";
+    window.location.hash =
+      nextPage === "forecast"
+        ? "forecast"
+        : nextPage === "admin"
+          ? "admin"
+          : nextPage === "forecast-events"
+            ? "forecast-events"
+            : "home";
     setPage(nextPage);
   }
 
@@ -72,7 +85,7 @@ export default function App() {
       navigate("home");
     }
 
-    if (page === "admin" && !canManageForecast) {
+    if ((page === "admin" || page === "forecast-events") && !canManageForecast) {
       navigate("home");
     }
   }, [canManageForecast, canViewForecast, isAuthenticated, page, user]);
@@ -104,9 +117,42 @@ export default function App() {
           </a>
         )}
         {canManageForecast && (
-          <a className={page === "admin" ? "active" : ""} href="#admin" onClick={() => navigate("admin")}>
-            Admin
-          </a>
+          <div
+            className={`nav-menu ${manageMenuOpen ? "open" : ""}`}
+            onMouseEnter={() => setManageMenuOpen(true)}
+            onMouseLeave={() => setManageMenuOpen(false)}
+          >
+            <button
+              type="button"
+              className={page === "admin" || page === "forecast-events" ? "active nav-menu-button" : "nav-menu-button"}
+              onClick={() => setManageMenuOpen((isOpen) => !isOpen)}
+              onFocus={() => setManageMenuOpen(true)}
+            >
+              Manage
+            </button>
+            <div className="nav-submenu">
+              <a
+                className={page === "admin" ? "active" : ""}
+                href="#admin"
+                onClick={() => {
+                  setManageMenuOpen(false);
+                  navigate("admin");
+                }}
+              >
+                Forecast
+              </a>
+              <a
+                className={page === "forecast-events" ? "active" : ""}
+                href="#forecast-events"
+                onClick={() => {
+                  setManageMenuOpen(false);
+                  navigate("forecast-events");
+                }}
+              >
+                Forecast Events
+              </a>
+            </div>
+          </div>
         )}
         <div className="nav-spacer" />
         <span className="nav-user">
@@ -120,7 +166,9 @@ export default function App() {
       {page === "forecast" && canViewForecast ? (
         <Forecast />
       ) : page === "admin" && canManageForecast ? (
-        <Admin />
+        <ManageForecast />
+      ) : page === "forecast-events" && canManageForecast ? (
+        <ForecastEvents />
       ) : (
         <HomePage onPrimaryAction={() => navigate(canViewForecast ? "forecast" : "home")} user={user} />
       )}

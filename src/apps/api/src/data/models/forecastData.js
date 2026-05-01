@@ -164,6 +164,27 @@ export const ForecastData = {
   },
 
   /**
+   * Removes forecast rows that do not yet have matching actuals, preserving rows
+   * needed for forecast-vs-actual metrics and bias correction.
+   */
+  async clearFutureByForecastType(forecastType = "baseline", db = pool) {
+    const result = await db.query(
+      `
+        DELETE FROM forecast_data fd
+        WHERE fd.forecast_type = $1
+          AND NOT EXISTS (
+            SELECT 1
+            FROM monthly_sales_data m
+            WHERE m.month = fd.forecast_month
+          )
+      `,
+      [forecastType]
+    );
+
+    return result.rowCount;
+  },
+
+  /**
    * Reads forecast rows from the latest completed run with optional hierarchy filters.
    */
   async findLatest(

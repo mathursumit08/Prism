@@ -87,7 +87,7 @@ function parseTimestampToNanoseconds(value) {
   return BigInt(baseMilliseconds) * 1_000_000n + fractionalNanoseconds;
 }
 
-export default function AdminPage() {
+export default function ManageForecastPage() {
   const { apiFetch } = useAuth();
   const [selectedHorizon, setSelectedHorizon] = useState(6);
   const [adminState, setAdminState] = useState({
@@ -175,7 +175,9 @@ export default function AdminPage() {
   }
 
   async function handleClear() {
-    const confirmed = window.confirm("Clear all stored forecast rows? Run history will remain available.");
+    const confirmed = window.confirm(
+      "Clear future forecast rows? Forecast rows for months with actuals will be preserved for metrics and bias correction."
+    );
     if (!confirmed) {
       return;
     }
@@ -206,7 +208,7 @@ export default function AdminPage() {
       });
       setActionState({
         loading: false,
-        message: `${formatUnits(payload.deletedRows)} forecast rows cleared successfully.`,
+        message: `${formatUnits(payload.deletedRows)} future forecast rows cleared successfully.`,
         error: ""
       });
     } catch (error) {
@@ -280,7 +282,7 @@ export default function AdminPage() {
           <p className="eyebrow">Forecast Administration</p>
           <h1>Manage the forecast pipeline without leaving Prism.</h1>
           <p className="admin-header-copy">
-            Review run health, clear stored output, and launch a new forecast regeneration with live progress.
+            Review run health, clear future output, and launch a new forecast regeneration with live progress.
           </p>
         </div>
         <div className="admin-hero-card">
@@ -300,7 +302,7 @@ export default function AdminPage() {
         <div className="panel-heading compact">
           <div>
             <p className="eyebrow">Run controls</p>
-            <h2>Clear or regenerate forecast data</h2>
+              <h2>Clear future rows or regenerate forecast data</h2>
           </div>
           <span className={`source-pill ${generation?.running ? "" : "live"}`}>
             {generation?.stageLabel || "Idle"}
@@ -332,7 +334,7 @@ export default function AdminPage() {
           </button>
 
           <button type="button" className="danger-button" onClick={handleClear} disabled={generation?.running || actionState.loading}>
-            Clear forecast data
+            Clear future forecast rows
           </button>
         </div>
       </section>
@@ -350,7 +352,7 @@ export default function AdminPage() {
         <article className="metric">
           <span>Stored forecast rows</span>
           <strong>{data ? formatUnits(data.storedForecastRows) : "Loading"}</strong>
-          <p>Current rows available to the forecast screens.</p>
+          <p>Current rows available to forecast screens, metrics, and bias correction.</p>
         </article>
         <article className="metric">
           <span>Latest run duration</span>
@@ -490,22 +492,23 @@ export default function AdminPage() {
           <div className="panel-heading compact">
             <div>
               <p className="eyebrow">Assumptions</p>
-              <h2>Active festival rules</h2>
+              <h2>Upcoming forecast events</h2>
             </div>
           </div>
           <div className="event-rule-list">
             {activeEvents.length > 0 ? (
               activeEvents.map((event) => (
-                <div key={event.eventCode} className="event-rule">
+                <div key={event.eventId || event.eventCode} className="event-rule">
                   <strong>{event.eventName}</strong>
                   <span>
-                    Month {event.startMonth}
-                    {event.startMonth !== event.endMonth ? ` to ${event.endMonth}` : ""} | +{event.upliftPct}%
+                    {event.startDate} to {event.endDate} | {event.scope}
+                    {event.scopeValue ? `: ${event.scopeValue}` : ""} | {event.upliftPct > 0 ? "+" : ""}
+                    {event.upliftPct}%
                   </span>
                 </div>
               ))
             ) : (
-              <p className="notice compact-notice">No active event uplift rules are configured.</p>
+              <p className="notice compact-notice">No active events fall within the upcoming forecast horizon.</p>
             )}
           </div>
         </article>

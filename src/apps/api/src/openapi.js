@@ -146,6 +146,41 @@ const forecastMetricsResponseSchema = {
   }
 };
 
+const forecastEventSchema = {
+  type: "object",
+  properties: {
+    eventId: { type: "integer" },
+    forecastType: { type: "string" },
+    eventCode: { type: "string" },
+    eventName: { type: "string" },
+    eventType: { enum: ["festive", "regulatory", "promotional", "holiday", "other"], type: "string" },
+    scope: { enum: ["national", "zone", "state"], type: "string" },
+    scopeValue: { nullable: true, type: "string" },
+    startDate: { format: "date", type: "string" },
+    endDate: { format: "date", type: "string" },
+    upliftPct: { minimum: -100, maximum: 200, type: "number" },
+    isActive: { type: "boolean" },
+    createdAt: { format: "date-time", type: "string" },
+    updatedAt: { format: "date-time", type: "string" }
+  }
+};
+
+const forecastEventRequestSchema = {
+  type: "object",
+  required: ["event_code", "event_name", "event_type", "scope", "start_date", "end_date", "uplift_pct"],
+  properties: {
+    event_code: { type: "string" },
+    event_name: { type: "string" },
+    event_type: { enum: ["festive", "regulatory", "promotional", "holiday", "other"], type: "string" },
+    scope: { enum: ["national", "zone", "state"], type: "string" },
+    scope_value: { nullable: true, type: "string" },
+    start_date: { format: "date", type: "string" },
+    end_date: { format: "date", type: "string" },
+    uplift_pct: { minimum: -100, maximum: 200, type: "number" },
+    is_active: { default: true, type: "boolean" }
+  }
+};
+
 function buildForecastPath(summary, description) {
   return {
     get: {
@@ -444,7 +479,8 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
       },
       "/api/v1/forecasts/admin/clear": {
         post: {
-          summary: "Clear forecast rows",
+          summary: "Clear future forecast rows",
+          description: "Deletes stored baseline forecast rows that do not yet have matching actual sales months. Actualized historical forecast rows are preserved for metrics and bias correction.",
           tags: ["Forecasts"],
           security: [{ bearerAuth: [] }],
           responses: {
@@ -482,6 +518,104 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
             401: { description: "Authentication required" },
             403: { description: "Permission denied" },
             409: { description: "A regeneration run is already in progress" }
+          }
+        }
+      },
+      "/api/v1/forecasts/admin/events": {
+        get: {
+          summary: "List forecast events",
+          description: "Returns configured sales-impacting event calendar entries.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            200: {
+              description: "Forecast events",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                      events: {
+                        type: "array",
+                        items: forecastEventSchema
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        },
+        post: {
+          summary: "Create forecast event",
+          description: "Creates a dated event calendar entry. Regenerate forecasts or wait for the worker run before forecast outputs reflect the change.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          requestBody: buildJsonRequestBody(forecastEventRequestSchema, {
+            event_code: "DIWALI_2026",
+            event_name: "Diwali",
+            event_type: "festive",
+            scope: "national",
+            scope_value: null,
+            start_date: "2026-11-08",
+            end_date: "2026-11-15",
+            uplift_pct: 12.5,
+            is_active: true
+          }),
+          responses: {
+            201: { description: "Forecast event created" },
+            400: { description: "Invalid event payload" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" },
+            409: { description: "Duplicate event code" }
+          }
+        }
+      },
+      "/api/v1/forecasts/admin/events/{eventId}": {
+        put: {
+          summary: "Update forecast event",
+          description: "Updates a dated event calendar entry. Regenerate forecasts or wait for the worker run before forecast outputs reflect the change.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "eventId",
+              required: true,
+              schema: { type: "integer" }
+            }
+          ],
+          requestBody: buildJsonRequestBody(forecastEventRequestSchema),
+          responses: {
+            200: { description: "Forecast event updated" },
+            400: { description: "Invalid event payload" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" },
+            404: { description: "Forecast event not found" },
+            409: { description: "Duplicate event code" }
+          }
+        },
+        delete: {
+          summary: "Delete forecast event",
+          description: "Deletes a forecast event. Regenerate forecasts or wait for the worker run before forecast outputs reflect the change.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "eventId",
+              required: true,
+              schema: { type: "integer" }
+            }
+          ],
+          responses: {
+            200: { description: "Forecast event deleted" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" },
+            404: { description: "Forecast event not found" }
           }
         }
       }
