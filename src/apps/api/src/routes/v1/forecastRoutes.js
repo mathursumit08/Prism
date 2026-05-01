@@ -4,6 +4,7 @@ import { requirePermission } from "../../middleware/requirePermission.js";
 import { permissions } from "../../auth/accessControl.js";
 import { parseForecastQuery } from "./forecastQuery.js";
 import { ForecastAdminService } from "../../services/forecastAdminService.js";
+import forecastEventRoutes from "./forecastEventRoutes.js";
 import {
   forecastEndpointConfigs,
   getActualsPayload,
@@ -15,6 +16,8 @@ import { getForecastMetricsPayload } from "../../services/forecastMetricsService
 const router = Router();
 
 router.use(authenticate);
+
+router.use("/admin/events", forecastEventRoutes);
 
 router.get("/baseline", requirePermission(permissions.viewForecast), async (request, response) => {
   await respondWithServiceCall(response, () => getBaselineForecastPayload(request.user, request.query));
@@ -53,7 +56,7 @@ router.get("/admin/status", requirePermission(permissions.manageForecast), async
 
 router.post("/admin/clear", requirePermission(permissions.manageForecast), async (_request, response) => {
   await respondWithServiceCall(response, async () => {
-    const deletedRows = await ForecastAdminService.clearForecastData();
+    const deletedRows = await ForecastAdminService.clearFutureForecastData();
     const status = await ForecastAdminService.getStatus();
 
     return {

@@ -3,6 +3,7 @@ import { ForecastCacheService } from "./forecastCacheService.js";
 import { runForecastWorker } from "../workers/forecastWorker.js";
 
 const FORECAST_TYPE = "baseline";
+const DEFAULT_HORIZON_MONTHS = 6;
 const allowedHorizons = new Set([6, 12, 24]);
 
 const generationState = {
@@ -80,13 +81,39 @@ function normalizeCalibration(row) {
 
 function normalizeEvent(event) {
   return {
+    eventId: event.event_id,
     eventCode: event.event_code,
     eventName: event.event_name,
-    startMonth: Number(event.start_month),
-    endMonth: Number(event.end_month),
+    eventType: event.event_type,
+    scope: event.scope,
+    scopeValue: event.scope_value,
+    startDate: event.start_date,
+    endDate: event.end_date,
     upliftPct: Number(event.uplift_pct),
     isActive: Boolean(event.is_active)
   };
+}
+
+function formatDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function addMonths(date, months) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+
+  return next;
+}
+
+function filterUpcomingEvents(events, horizonMonths) {
+  const today = formatDate(new Date());
+  const horizonEnd = formatDate(addMonths(new Date(), horizonMonths));
+
+  return events.filter((event) => event.end_date >= today && event.start_date <= horizonEnd);
 }
 
 function buildGenerationSnapshot() {
@@ -118,13 +145,18 @@ export const ForecastAdminService = {
   },
 
   async getStatus() {
-    const [lastSuccessfulRun, latestRun, lastFailedRun, storedForecastRows, activeEvents] = await Promise.all([
+    const [lastSuccessfulRun, latestRun, lastFailedRun, storedForecastRows] = await Promise.all([
       ForecastRun.findLatestCompleted({ forecastType: FORECAST_TYPE }),
       ForecastRun.findLatest({ forecastType: FORECAST_TYPE }),
       ForecastRun.findLatestFailed({ forecastType: FORECAST_TYPE }),
-      ForecastData.countByForecastType(FORECAST_TYPE),
-      ForecastEventCalendar.findActive({ forecastType: FORECAST_TYPE })
+      ForecastData.countByForecastType(FORECAST_TYPE)
     ]);
+    const horizonMonths =
+      generationState.horizon || lastSuccessfulRun?.horizon_months || DEFAULT_HORIZON_MONTHS;
+    const activeEvents = filterUpcomingEvents(
+      await ForecastEventCalendar.findActive({ forecastType: FORECAST_TYPE }),
+      horizonMonths
+    );
 
     return {
       forecastType: FORECAST_TYPE,
@@ -139,14 +171,14 @@ export const ForecastAdminService = {
     };
   },
 
-  async clearForecastData() {
+  async clearFutureForecastData() {
     if (generationState.running) {
       const error = new Error("Forecast regeneration is currently running. Please wait for it to finish.");
       error.code = "RUN_IN_PROGRESS";
       throw error;
     }
 
-    const deleted = await ForecastData.clearByForecastType(FORECAST_TYPE);
+    const deleted = await ForecastData.clearFutureByForecastType(FORECAST_TYPE);
     ForecastCacheService.clear();
     return deleted;
   },
