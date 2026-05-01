@@ -92,6 +92,7 @@ const forecastResponseSchema = {
           lower_95: { type: "number" },
           upper_95: { type: "number" },
           dataQuality: { enum: ["rich", "sparse", "fallback"], type: "string" },
+          biasCorrection: { type: "number" },
           method: { nullable: true, type: "string" },
           validation: {
             type: "object",
@@ -101,6 +102,44 @@ const forecastResponseSchema = {
               mape: { nullable: true, type: "number" }
             }
           }
+        }
+      }
+    }
+  }
+};
+
+const forecastMetricsResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    window: { enum: [1, 3, 6], type: "integer" },
+    filters: {
+      type: "object",
+      properties: {
+        level: { enum: ["dealer", "state", "zone"], nullable: true, type: "string" },
+        groupId: { nullable: true, type: "string" },
+        segment: { nullable: true, type: "string" },
+        modelId: { nullable: true, type: "string" },
+        variantId: { nullable: true, type: "string" }
+      }
+    },
+    metrics: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          level: { type: "string" },
+          groupId: { type: "string" },
+          groupLabel: { type: "string" },
+          segment: { nullable: true, type: "string" },
+          modelId: { nullable: true, type: "string" },
+          variantId: { nullable: true, type: "string" },
+          avgMape: { nullable: true, type: "number" },
+          avgRmse: { nullable: true, type: "number" },
+          avgMae: { nullable: true, type: "number" },
+          bias: { nullable: true, type: "number" },
+          biasCorrection: { nullable: true, type: "number" },
+          sampleCount: { type: "integer" }
         }
       }
     }
@@ -320,6 +359,65 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
         "Actuals series",
         "Returns the historical actuals data in the original dashboard response shape."
       ),
+      "/api/v1/forecasts/metrics": {
+        get: {
+          summary: "Forecast accuracy metrics",
+          description: "Returns rolling MAPE, RMSE, MAE, and bias metrics by forecast entity.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "query",
+              name: "level",
+              schema: { enum: ["dealer", "state", "zone"], type: "string" }
+            },
+            {
+              in: "query",
+              name: "groupId",
+              schema: { type: "string" }
+            },
+            {
+              in: "query",
+              name: "segment",
+              schema: { type: "string" }
+            },
+            {
+              in: "query",
+              name: "modelId",
+              schema: { type: "string" }
+            },
+            {
+              in: "query",
+              name: "variantId",
+              schema: { type: "string" }
+            },
+            {
+              in: "query",
+              name: "window",
+              schema: { default: 6, enum: [1, 3, 6], type: "integer" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Forecast accuracy metrics response",
+              content: {
+                "application/json": {
+                  schema: forecastMetricsResponseSchema
+                }
+              }
+            },
+            400: {
+              description: "Invalid query parameters"
+            },
+            401: {
+              description: "Authentication required"
+            },
+            403: {
+              description: "Permission denied"
+            }
+          }
+        }
+      },
       "/api/v1/forecasts/regional": buildForecastPath(
         "Regional forecasts",
         "Returns regional forecast records using zone-level stored forecasts."
