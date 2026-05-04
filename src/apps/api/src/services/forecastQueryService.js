@@ -138,15 +138,27 @@ export async function getVersionedForecastPayload(user, endpointConfig, filters)
   }
 
   const scope = getScope(user);
-  const rows = await ForecastData.findLatest({
-    forecastType: "baseline",
-    groupId: resolveGroupIdForEndpoint(endpointConfig, filters),
-    level: endpointConfig.level,
-    scope,
-    segment: filters.segment
-  });
-
-  const normalizedRows = await normalizeRows(endpointConfig, rows, filters, scope);
+  const normalizedResult =
+    endpointConfig.endpoint === "blended"
+      ? await buildBlendedForecastResult(filters, scope)
+      : {
+          rows: await normalizeRows(
+            endpointConfig,
+            await ForecastData.findLatest({
+              forecastType: "baseline",
+              groupId: resolveGroupIdForEndpoint(endpointConfig, filters),
+              level: endpointConfig.level,
+              scope,
+              segment: filters.segment,
+              modelId: filters.modelId,
+              variantId: filters.variantId
+            }),
+            filters,
+            scope
+          ),
+          modelWeights: null
+        };
+  const normalizedRows = normalizedResult.rows;
   const paged = paginateRows(normalizedRows, filters.page, filters.pageSize);
 
   return {
@@ -155,6 +167,7 @@ export async function getVersionedForecastPayload(user, endpointConfig, filters)
     runId: latestRun.run_id,
     completedAt: latestRun.completed_at,
     filters,
+    ...(normalizedResult.modelWeights ? { modelWeights: normalizedResult.modelWeights } : {}),
     pagination: paged.pagination,
     data: paged.data
   };
@@ -347,6 +360,10 @@ async function findActualRows({ level, groupId, segment, modelId, variantId, bre
 }
 
 function resolveGroupIdForEndpoint(config, filters) {
+  if (config.endpoint === "blended" && filters.groupId) {
+    return filters.groupId;
+  }
+
   if (config.endpoint === "regional" && filters.region) {
     return filters.region;
   }
@@ -382,7 +399,94 @@ async function normalizeRows(config, rows, filters, scope) {
   }
 
   const filteredRows = filterRowsByDateAndHorizon(workingRows, filters);
-  return filteredRows.map((row) => ({
+  return filteredRows.map((row) => normalizeForecastRow(config, row));
+}
+
+async function buildBlendedForecastResult(filters, scope) {
+  const dealerRows = await ForecastData.findLatest({
+    forecastType: "baseline",
+    groupId: filters.groupId,
+    level: "dealer",
+    scope,
+    segment: filters.segment,
+    modelId: filters.modelId,
+    variantId: filters.variantId
+  });
+  const scopedDealerRows = await filterDealerRowsByRegion(dealerRows, filters.region, scope);
+  const dealerZones = await findDealerZones(scopedDealerRows.map((row) => row.group_id), scope);
+  const requiredZones = new Set([...dealerZones.values()].filter(Boolean));
+  const zoneScope = scope.kind === "dealer" ? { kind: "all" } : scope;
+  const zoneRows = await ForecastData.findLatest({
+    forecastType: "baseline",
+    groupId: filters.region || (requiredZones.size === 1 ? [...requiredZones][0] : null),
+    level: "zone",
+    scope: zoneScope,
+    segment: filters.segment,
+    modelId: filters.modelId,
+    variantId: filters.variantId
+  });
+  const zoneRowsByKey = new Map(
+    zoneRows
+      .filter((row) => requiredZones.size === 0 || requiredZones.has(row.group_id))
+      .map((row) => [buildBlendKey(row.group_id, row), row])
+  );
+  const dealerTotalsByZoneKey = buildDealerTotalsByZoneKey(scopedDealerRows, dealerZones);
+  const weightsSummary = {
+    dealer: 0,
+    zone: 0,
+    count: 0
+  };
+  const blendedRows = scopedDealerRows.map((dealerRow) => {
+    const zone = dealerZones.get(dealerRow.group_id);
+    const zoneRow = zone ? zoneRowsByKey.get(buildBlendKey(zone, dealerRow)) : null;
+
+    if (!zoneRow) {
+      weightsSummary.dealer += 1;
+      weightsSummary.count += 1;
+      return {
+        ...dealerRow,
+        sourceLevel: "blended",
+        model_method: `${dealerRow.model_method} + dealer-only-blend`,
+        model_weights: {
+          dealer: 1,
+          zone: 0
+        }
+      };
+    }
+
+    const weights = calculateBlendWeights(dealerRow.validation_mape, zoneRow.validation_mape);
+    const zoneShare = calculateZoneShare(dealerRow, dealerTotalsByZoneKey, zone);
+    const allocatedZone = allocateZoneRow(zoneRow, zoneShare);
+
+    weightsSummary.dealer += weights.dealer;
+    weightsSummary.zone += weights.zone;
+    weightsSummary.count += 1;
+
+    return {
+      ...dealerRow,
+      sourceLevel: "blended",
+      forecast_units: blendNumeric(dealerRow.forecast_units, allocatedZone.forecast_units, weights),
+      lower_80: blendNumeric(dealerRow.lower_80, allocatedZone.lower_80, weights),
+      upper_80: blendNumeric(dealerRow.upper_80, allocatedZone.upper_80, weights),
+      lower_95: blendNumeric(dealerRow.lower_95, allocatedZone.lower_95, weights),
+      upper_95: blendNumeric(dealerRow.upper_95, allocatedZone.upper_95, weights),
+      model_method: "inverse-MAPE weighted dealer-zone ensemble",
+      validation_mae: blendNullableMetric(dealerRow.validation_mae, zoneRow.validation_mae, weights),
+      validation_rmse: blendNullableMetric(dealerRow.validation_rmse, zoneRow.validation_rmse, weights),
+      validation_mape: blendNullableMetric(dealerRow.validation_mape, zoneRow.validation_mape, weights),
+      model_weights: weights
+    };
+  });
+  const filteredRows = filterRowsByDateAndHorizon(blendedRows, filters);
+
+  return {
+    rows: filteredRows.map((row) => normalizeForecastRow({ endpoint: "blended" }, row)),
+    modelWeights: summarizeModelWeights(weightsSummary)
+  };
+}
+
+function normalizeForecastRow(config, row) {
+  return {
     forecastDate: row.forecast_month,
     forecastType: config.endpoint,
     groupId: row.group_id,
@@ -400,13 +504,158 @@ async function normalizeRows(config, rows, filters, scope) {
     upper_95: Number(row.upper_95),
     dataQuality: row.data_quality ?? "rich",
     biasCorrection: Number(row.bias_correction ?? 1),
+    ...(row.model_weights ? { modelWeights: row.model_weights } : {}),
     validation: {
       mae: row.validation_mae === null ? null : Number(row.validation_mae),
       mape: row.validation_mape === null ? null : Number(row.validation_mape),
       rmse: row.validation_rmse === null ? null : Number(row.validation_rmse)
     },
     variantId: row.variant_id
-  }));
+  };
+}
+
+function buildBlendKey(zone, row) {
+  return [
+    zone,
+    row.forecast_month,
+    row.segment ?? "",
+    row.model_id ?? "",
+    row.variant_id ?? ""
+  ].join("|");
+}
+
+async function findDealerZones(dealerIds, scope) {
+  const uniqueDealerIds = [...new Set(dealerIds.filter(Boolean))];
+  if (uniqueDealerIds.length === 0) {
+    return new Map();
+  }
+
+  const conditions = ["dealer_id = ANY($1::VARCHAR[])"];
+  const values = [uniqueDealerIds];
+
+  if (scope.kind === "region") {
+    values.push(scope.region);
+    conditions.push(`region = $${values.length}`);
+  }
+
+  if (scope.kind === "dealer") {
+    values.push(scope.dealerId);
+    conditions.push(`dealer_id = $${values.length}`);
+  }
+
+  const result = await pool.query(
+    `
+      SELECT dealer_id, region
+      FROM dealers
+      WHERE ${conditions.join(" AND ")}
+    `,
+    values
+  );
+
+  return new Map(result.rows.map((row) => [row.dealer_id, row.region]));
+}
+
+function buildDealerTotalsByZoneKey(rows, dealerZones) {
+  const totals = new Map();
+
+  for (const row of rows) {
+    const zone = dealerZones.get(row.group_id);
+    if (!zone) {
+      continue;
+    }
+
+    const key = buildBlendKey(zone, row);
+    totals.set(key, (totals.get(key) ?? 0) + Number(row.forecast_units));
+  }
+
+  return totals;
+}
+
+function calculateZoneShare(dealerRow, dealerTotalsByZoneKey, zone) {
+  const total = dealerTotalsByZoneKey.get(buildBlendKey(zone, dealerRow)) ?? 0;
+  if (total <= 0) {
+    return 0;
+  }
+
+  return Number(dealerRow.forecast_units) / total;
+}
+
+function allocateZoneRow(zoneRow, share) {
+  return {
+    forecast_units: Number(zoneRow.forecast_units) * share,
+    lower_80: Number(zoneRow.lower_80) * share,
+    upper_80: Number(zoneRow.upper_80) * share,
+    lower_95: Number(zoneRow.lower_95) * share,
+    upper_95: Number(zoneRow.upper_95) * share
+  };
+}
+
+function calculateBlendWeights(dealerMape, zoneMape) {
+  const dealerScore = inverseMapeScore(dealerMape);
+  const zoneScore = inverseMapeScore(zoneMape);
+  const total = dealerScore + zoneScore;
+
+  if (total <= 0) {
+    return {
+      dealer: 0.5,
+      zone: 0.5
+    };
+  }
+
+  return {
+    dealer: roundWeight(dealerScore / total),
+    zone: roundWeight(zoneScore / total)
+  };
+}
+
+function inverseMapeScore(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue < 0) {
+    return 1;
+  }
+
+  return 1 / Math.max(numericValue, 0.1);
+}
+
+function blendNumeric(dealerValue, zoneValue, weights) {
+  return Math.max(0, Math.round(Number(dealerValue) * weights.dealer + Number(zoneValue) * weights.zone));
+}
+
+function blendNullableMetric(dealerValue, zoneValue, weights) {
+  const dealerMetric = Number(dealerValue);
+  const zoneMetric = Number(zoneValue);
+
+  if (!Number.isFinite(dealerMetric) && !Number.isFinite(zoneMetric)) {
+    return null;
+  }
+
+  if (!Number.isFinite(dealerMetric)) {
+    return Number(zoneMetric.toFixed(2));
+  }
+
+  if (!Number.isFinite(zoneMetric)) {
+    return Number(dealerMetric.toFixed(2));
+  }
+
+  return Number((dealerMetric * weights.dealer + zoneMetric * weights.zone).toFixed(2));
+}
+
+function roundWeight(value) {
+  return Number(value.toFixed(4));
+}
+
+function summarizeModelWeights(summary) {
+  if (summary.count === 0) {
+    return {
+      dealer: 0.5,
+      zone: 0.5
+    };
+  }
+
+  return {
+    dealer: roundWeight(summary.dealer / summary.count),
+    zone: roundWeight(summary.zone / summary.count)
+  };
 }
 
 function filterRowsByDateAndHorizon(rows, filters) {

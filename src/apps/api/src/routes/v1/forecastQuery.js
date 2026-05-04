@@ -13,6 +13,9 @@ export function parseForecastQuery(query) {
   const endDate = query.endDate || null;
   const region = query.region?.trim() || null;
   const segment = query.segment?.trim() || null;
+  const groupId = query.groupId?.trim() || null;
+  const modelId = (query.modelId || query.ModelId)?.trim() || null;
+  const variantId = (query.variantId || query.VariantId)?.trim() || null;
   const errors = [];
 
   if (!Number.isInteger(page) || page < 1) {
@@ -45,8 +48,11 @@ export function parseForecastQuery(query) {
       horizon,
       page,
       pageSize,
+      groupId,
+      modelId,
       region,
       segment,
+      variantId,
       startDate
     },
     isValid: errors.length === 0,

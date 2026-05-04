@@ -480,6 +480,26 @@ select:disabled {
   background: #fff0d8;
 }
 
+.model-weight-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.model-weight-strip span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #cfe2dc;
+  border-radius: 999px;
+  color: #184640;
+  background: #eef9f5;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
 .interval-toggle-group {
   display: flex;
   flex-wrap: wrap;

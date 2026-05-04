@@ -14,6 +14,10 @@ const leadingEntityLabels = {
 };
 
 const forecastHorizons = [6, 12, 24];
+const forecastModes = [
+  { value: "baseline", label: "Baseline" },
+  { value: "blended", label: "Blended ensemble" }
+];
 
 function getSeriesColor(index, total, alpha = 1) {
   const hue = Math.round((index * 137.508) % 360);
@@ -49,6 +53,10 @@ function formatChartMonth(value) {
 
 function formatUnits(value) {
   return new Intl.NumberFormat("en-IN").format(Math.round(value || 0));
+}
+
+function formatWeight(value) {
+  return `${Math.round(Number(value || 0) * 100)}%`;
 }
 
 function getBandLabel(intervalMode) {
@@ -167,6 +175,52 @@ function aggregateSeriesBySegment(series) {
   }
 
   return [...grouped.values()];
+}
+
+function transformVersionedRowsToSeries(rows) {
+  const groups = new Map();
+
+  for (const row of rows) {
+    const key = `${row.level}:${row.groupId}:${row.segment ?? ""}:${row.modelId ?? ""}:${row.variantId ?? ""}`;
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        level: row.level,
+        groupId: row.groupId,
+        groupLabel: row.groupLabel,
+        segment: row.segment ?? null,
+        modelId: row.modelId,
+        variantId: row.variantId,
+        seriesKey: row.groupId,
+        seriesLabel: row.groupLabel,
+        method: row.method,
+        sourceLevel: row.sourceLevel,
+        modelWeights: row.modelWeights,
+        validation: row.validation || {
+          mae: null,
+          rmse: null,
+          mape: null
+        },
+        forecast: []
+      });
+    }
+
+    groups.get(key).forecast.push({
+      month: row.forecastDate,
+      unitsSold: Number(row.units),
+      lower_80: Number(row.lower_80),
+      upper_80: Number(row.upper_80),
+      lower_95: Number(row.lower_95),
+      upper_95: Number(row.upper_95),
+      dataQuality: row.dataQuality ?? "rich",
+      biasCorrection: Number(row.biasCorrection ?? 1)
+    });
+  }
+
+  return [...groups.values()].map((series) => ({
+    ...series,
+    forecast: series.forecast.sort((left, right) => left.month.localeCompare(right.month))
+  }));
 }
 
 function ForecastChart({
@@ -463,6 +517,7 @@ export default function ForecastPage() {
   const [modelId, setModelId] = useState("");
   const [variantId, setVariantId] = useState("");
   const [horizonMonths, setHorizonMonths] = useState(6);
+  const [forecastMode, setForecastMode] = useState("baseline");
   const [hoveredGroupId, setHoveredGroupId] = useState("");
   const [hoveredBreakdownId, setHoveredBreakdownId] = useState("");
   const [intervalMode, setIntervalMode] = useState("point");
@@ -476,7 +531,8 @@ export default function ForecastPage() {
   const [forecastState, setForecastState] = useState({
     loading: true,
     error: "",
-    series: []
+    series: [],
+    modelWeights: null
   });
   const [actualState, setActualState] = useState({
     loading: true,
@@ -494,6 +550,12 @@ export default function ForecastPage() {
       setLevel(availableLevels[0].value);
     }
   }, [availableLevels, level]);
+
+  useEffect(() => {
+    if (forecastMode === "blended" && level !== "dealer" && availableLevels.some((option) => option.value === "dealer")) {
+      setLevel("dealer");
+    }
+  }, [availableLevels, forecastMode, level]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -632,8 +694,13 @@ export default function ForecastPage() {
           params.set("variantId", variantId);
         }
 
+        if (forecastMode === "blended") {
+          params.set("horizon", String(horizonMonths));
+          params.set("pageSize", "1000");
+        }
+
         const [forecastResponse, actualResponse] = await Promise.all([
-          apiFetch(`/api/v1/forecasts/baseline?${params}`, {
+          apiFetch(`/api/v1/forecasts/${forecastMode === "blended" ? "blended" : "baseline"}?${params}`, {
             signal: controller.signal
           }),
           apiFetch(`/api/v1/forecasts/actuals?${params}`, {
@@ -653,7 +720,12 @@ export default function ForecastPage() {
         }
 
         const forecastData = await forecastResponse.json();
-        if (!forecastData.series?.length) {
+        const forecastSeries =
+          forecastMode === "blended"
+            ? transformVersionedRowsToSeries(forecastData.data || [])
+            : forecastData.series || [];
+
+        if (!forecastSeries.length) {
           throw new Error("No forecast data is available for the selected filters.");
         }
 
@@ -662,7 +734,8 @@ export default function ForecastPage() {
         setForecastState({
           loading: false,
           error: "",
-          series: forecastData.series
+          series: forecastSeries,
+          modelWeights: forecastData.modelWeights || null
         });
         setActualState({
           loading: false,
@@ -677,7 +750,8 @@ export default function ForecastPage() {
         setForecastState({
           loading: false,
           error: error.message || "Unable to load forecast data",
-          series: []
+          series: [],
+          modelWeights: null
         });
         setActualState({
           loading: false,
@@ -690,7 +764,7 @@ export default function ForecastPage() {
     loadForecastAndActuals();
 
     return () => controller.abort();
-  }, [apiFetch, level, groupId, segment, modelId, variantId]);
+  }, [apiFetch, forecastMode, groupId, horizonMonths, level, segment, modelId, variantId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -811,6 +885,17 @@ export default function ForecastPage() {
             Forecast level
             <select value={level} onChange={(event) => setLevel(event.target.value)}>
               {availableLevels.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Forecast method
+            <select value={forecastMode} onChange={(event) => setForecastMode(event.target.value)}>
+              {forecastModes.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -1053,12 +1138,18 @@ export default function ForecastPage() {
               95% band
             </label>
             <span className={hasForecastData ? "source-pill live" : "source-pill"}>
-              {forecastState.loading ? "Loading" : hasForecastData ? "Live API" : "No data"}
+              {forecastState.loading ? "Loading" : hasForecastData ? forecastMode === "blended" ? "Blended API" : "Live API" : "No data"}
             </span>
           </div>
         </div>
 
         {forecastState.error && <p className="notice">{forecastState.error}</p>}
+        {forecastMode === "blended" && forecastState.modelWeights && (
+          <div className="model-weight-strip">
+            <span>Dealer model {formatWeight(forecastState.modelWeights.dealer)}</span>
+            <span>Zone model {formatWeight(forecastState.modelWeights.zone)}</span>
+          </div>
+        )}
 
         <ForecastChart
           series={visibleSeries}

@@ -25,6 +25,24 @@ const forecastQueryParameters = [
   },
   {
     in: "query",
+    name: "groupId",
+    schema: { type: "string" },
+    description: "Forecast group filter. For blended forecasts this can identify a dealer."
+  },
+  {
+    in: "query",
+    name: "modelId",
+    schema: { type: "string" },
+    description: "Vehicle model filter."
+  },
+  {
+    in: "query",
+    name: "variantId",
+    schema: { type: "string" },
+    description: "Vehicle variant filter."
+  },
+  {
+    in: "query",
     name: "horizon",
     schema: { minimum: 1, maximum: 60, type: "integer" },
     description: "Maximum number of forecast months per series."
@@ -56,7 +74,10 @@ const forecastResponseSchema = {
         startDate: { format: "date", nullable: true, type: "string" },
         endDate: { format: "date", nullable: true, type: "string" },
         region: { nullable: true, type: "string" },
+        groupId: { nullable: true, type: "string" },
         segment: { nullable: true, type: "string" },
+        modelId: { nullable: true, type: "string" },
+        variantId: { nullable: true, type: "string" },
         horizon: { nullable: true, type: "integer" },
         page: { type: "integer" },
         pageSize: { type: "integer" }
@@ -70,6 +91,14 @@ const forecastResponseSchema = {
         totalPages: { type: "integer" },
         totalRecords: { type: "integer" }
       }
+    },
+    modelWeights: {
+      type: "object",
+      properties: {
+        dealer: { type: "number" },
+        zone: { type: "number" }
+      },
+      description: "For blended forecasts, the average inverse-MAPE ensemble weights applied to dealer-level and zone-level model outputs."
     },
     data: {
       type: "array",
@@ -463,7 +492,7 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
       ),
       "/api/v1/forecasts/blended": buildForecastPath(
         "Blended forecasts",
-        "Returns a blended view that combines national, regional, and dealer forecast records."
+        "Returns dealer-level forecasts blended with the dealer's allocated share of zone-level output. Dealer and zone contributions are weighted by inverse recent hold-out MAPE, so lower-MAPE model outputs receive higher weight."
       ),
       "/api/v1/forecasts/admin/status": {
         get: {
