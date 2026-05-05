@@ -11,7 +11,7 @@ export function buildUserProfile(user) {
   const canViewForecast = grantedPermissions.includes(permissions.viewForecast);
   const canManageForecast = grantedPermissions.includes(permissions.manageForecast);
   const forecastLevels =
-    role === "Dealer Manager"
+    role === "Dealer Manager" || role === "Dealer Head"
       ? ["dealer"]
       : canViewForecast
         ? ["zone", "state", "dealer"]
@@ -39,7 +39,7 @@ export function getScope(profile) {
     };
   }
 
-  if (profile.role === "Dealer Manager") {
+  if (profile.role === "Dealer Manager" || profile.role === "Dealer Head") {
     return {
       kind: "dealer",
       dealerId: profile.dealerId
@@ -100,7 +100,7 @@ export async function isGroupAllowed(profile, level, groupId) {
     }
   }
 
-  if (profile.role === "Dealer Manager") {
+  if (profile.role === "Dealer Manager" || profile.role === "Dealer Head") {
     return level === "dealer" && groupId === profile.dealerId;
   }
 

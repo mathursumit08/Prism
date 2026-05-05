@@ -19,6 +19,30 @@ const forecastModes = [
   { value: "blended", label: "Blended ensemble" }
 ];
 
+const defaultDashboardCardVisibility = Object.freeze({
+  trend: true,
+  segmentSplit: true,
+  accuracyTrend: true,
+  biasTrend: true,
+  actualPredicted: true,
+  errorDistribution: true,
+  leaderboard: true,
+  forecastGraph: true,
+  regionalSegmentSplit: true,
+  segmentBreakdown: true,
+  forecastData: true
+});
+
+function buildDashboardCardVisibility(cards) {
+  return cards.reduce(
+    (visibility, card) => ({
+      ...visibility,
+      [card.key]: Boolean(card.enabled)
+    }),
+    { ...defaultDashboardCardVisibility }
+  );
+}
+
 function getSeriesColor(index, total, alpha = 1) {
   const hue = Math.round((index * 137.508) % 360);
   const saturation = 64 + ((index * 17) % 22);
@@ -43,6 +67,25 @@ function limitSeriesMonths(series, months) {
     .filter((item) => item.forecast.length > 0);
 }
 
+function getCurrentMonthStart() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+
+  return `${year}-${month}-01`;
+}
+
+function limitSeriesFromMonth(series, months, startMonth) {
+  return series
+    .map((item) => ({
+      ...item,
+      forecast: item.forecast
+        .filter((point) => point.month >= startMonth)
+        .slice(0, months)
+    }))
+    .filter((item) => item.forecast.length > 0);
+}
+
 function formatMonth(value) {
   return new Intl.DateTimeFormat("en", { month: "short" }).format(new Date(value));
 }
@@ -53,6 +96,22 @@ function formatChartMonth(value) {
 
 function formatUnits(value) {
   return new Intl.NumberFormat("en-IN").format(Math.round(value || 0));
+}
+
+function formatDecimal(value, digits = 1) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "N/A";
+  }
+
+  return Number(value).toFixed(digits);
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "N/A";
+  }
+
+  return `${Number(value).toFixed(1)}%`;
 }
 
 function formatWeight(value) {
@@ -366,8 +425,8 @@ function ForecastChart({
   );
 }
 
-function TrendChart({ actualTotals, forecastTotals }) {
-  const width = 920;
+function TrendChart({ actualTotals, forecastTotals, wide = false }) {
+  const width = wide ? 1220 : 920;
   const height = 320;
   const padding = { top: 20, right: 28, bottom: 68, left: 64 };
   const merged = [
@@ -433,9 +492,9 @@ function TrendChart({ actualTotals, forecastTotals }) {
   );
 }
 
-function ContributionChart({ series, message = "Forecast contribution data will appear here when available." }) {
+function ContributionChart({ series, message = "Forecast contribution data will appear here when available.", wide = false }) {
   const months = buildContributionMonths(series);
-  const width = 920;
+  const width = wide ? 1220 : 920;
   const height = 320;
   const padding = { top: 20, right: 20, bottom: 68, left: 64 };
 
@@ -506,6 +565,273 @@ function ContributionChart({ series, message = "Forecast contribution data will 
   );
 }
 
+function MetricTrendChart({ data, wide = false }) {
+  if (!data.length) {
+    return <div className="empty-chart">Accuracy trend data will appear after forecasts overlap with actuals.</div>;
+  }
+
+  const width = wide ? 1220 : 920;
+  const height = 320;
+  const padding = { top: 20, right: 28, bottom: 68, left: 64 };
+  const metrics = [
+    { key: "mape", label: "MAPE", color: "#006d77", formatter: formatPercent },
+    { key: "mae", label: "MAE", color: "#8a5a00", formatter: formatUnits },
+    { key: "rmse", label: "RMSE", color: "#6a4c93", formatter: formatUnits }
+  ];
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const maxValue = Math.max(...data.flatMap((point) => metrics.map((metric) => Number(point[metric.key] || 0))), 1);
+  const xAxisLabelY = padding.top + chartHeight + 12;
+  const xFor = (index) => padding.left + (index / Math.max(data.length - 1, 1)) * chartWidth;
+  const yFor = (value) => padding.top + chartHeight - (Number(value || 0) / maxValue) * chartHeight;
+  const buildPath = (key) =>
+    data.map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(index)} ${yFor(point[key])}`).join(" ");
+
+  return (
+    <>
+      <div className="chart-wrap">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img">
+          <title>MAPE, MAE, and RMSE trend</title>
+          {[0, 0.25, 0.5, 0.75, 1].map((step) => {
+            const y = padding.top + chartHeight - step * chartHeight;
+            const value = maxValue * step;
+            return (
+              <g key={step}>
+                <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} />
+                <text x={padding.left - 12} y={y + 5} textAnchor="end">
+                  {formatDecimal(value, 0)}
+                </text>
+              </g>
+            );
+          })}
+          {data.map((point, index) => (
+            <text
+              key={point.month}
+              x={xFor(index)}
+              y={xAxisLabelY}
+              textAnchor="end"
+              transform={`rotate(-90 ${xFor(index)} ${xAxisLabelY})`}
+            >
+              {formatChartMonth(point.month)}
+            </text>
+          ))}
+          {metrics.map((metric) => (
+            <path key={metric.key} d={buildPath(metric.key)} stroke={metric.color} strokeWidth="3">
+              <title>{metric.label}</title>
+            </path>
+          ))}
+          {data.map((point, index) =>
+            metrics.map((metric) => (
+              <circle key={`${point.month}-${metric.key}`} cx={xFor(index)} cy={yFor(point[metric.key])} r="3" fill={metric.color}>
+                <title>{`${metric.label}: ${metric.formatter(point[metric.key])}`}</title>
+              </circle>
+            ))
+          )}
+        </svg>
+      </div>
+      <div className="chart-legend">
+        {metrics.map((metric) => (
+          <span key={metric.key}>
+            <i className="legend-line" style={{ borderTopColor: metric.color }} />
+            {metric.label}
+          </span>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function BiasChart({ data, wide = false }) {
+  if (!data.length) {
+    return <div className="empty-chart">Bias data will appear after forecasts overlap with actuals.</div>;
+  }
+
+  const width = wide ? 1220 : 920;
+  const height = 280;
+  const padding = { top: 24, right: 24, bottom: 68, left: 64 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const maxAbs = Math.max(...data.map((point) => Math.abs(Number(point.bias || 0))), 1);
+  const xAxisLabelY = padding.top + chartHeight + 12;
+  const zeroY = padding.top + chartHeight / 2;
+  const barWidth = (chartWidth / Math.max(data.length, 1)) * 0.58;
+  const xFor = (index) => padding.left + (index / data.length) * chartWidth + chartWidth / data.length / 2 - barWidth / 2;
+  const yFor = (value) => zeroY - (Number(value || 0) / maxAbs) * (chartHeight / 2);
+
+  return (
+    <div className="chart-wrap">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img">
+        <title>Forecast bias by month</title>
+        <line x1={padding.left} x2={width - padding.right} y1={zeroY} y2={zeroY} className="zero-line" />
+        {[maxAbs, 0, -maxAbs].map((value) => (
+          <text key={value} x={padding.left - 12} y={yFor(value) + 5} textAnchor="end">
+            {formatUnits(value)}
+          </text>
+        ))}
+        {data.map((point, index) => {
+          const value = Number(point.bias || 0);
+          const y = value >= 0 ? yFor(value) : zeroY;
+          const heightValue = Math.max(Math.abs(yFor(value) - zeroY), 1);
+          return (
+            <g key={point.month}>
+              <rect
+                x={xFor(index)}
+                y={y}
+                width={barWidth}
+                height={heightValue}
+                fill={value >= 0 ? "#b45309" : "#00796b"}
+                opacity="0.84"
+              >
+                <title>{`${formatChartMonth(point.month)} bias: ${formatUnits(value)} (${formatPercent(point.biasPct)})`}</title>
+              </rect>
+              <text
+                x={xFor(index) + barWidth / 2}
+                y={xAxisLabelY}
+                textAnchor="end"
+                transform={`rotate(-90 ${xFor(index) + barWidth / 2} ${xAxisLabelY})`}
+              >
+                {formatChartMonth(point.month)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function ActualPredictedScatter({ observations, wide = false }) {
+  if (!observations.length) {
+    return <div className="empty-chart">Matched actual and predicted points will appear here.</div>;
+  }
+
+  const width = wide ? 1220 : 460;
+  const height = 320;
+  const padding = { top: 22, right: 22, bottom: 50, left: 58 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const maxValue = Math.max(...observations.flatMap((point) => [point.actualUnits, point.forecastUnits].map(Number)), 1);
+  const xFor = (value) => padding.left + (Number(value || 0) / maxValue) * chartWidth;
+  const yFor = (value) => padding.top + chartHeight - (Number(value || 0) / maxValue) * chartHeight;
+
+  return (
+    <div className="chart-wrap compact-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img">
+        <title>Actual versus predicted scatter</title>
+        {[0, 0.5, 1].map((step) => {
+          const value = maxValue * step;
+          return (
+            <g key={step}>
+              <line x1={padding.left} x2={width - padding.right} y1={yFor(value)} y2={yFor(value)} />
+              <line x1={xFor(value)} x2={xFor(value)} y1={padding.top} y2={height - padding.bottom} />
+              <text x={padding.left - 10} y={yFor(value) + 5} textAnchor="end">
+                {formatUnits(value)}
+              </text>
+              <text x={xFor(value)} y={height - padding.bottom + 22} textAnchor="middle">
+                {formatUnits(value)}
+              </text>
+            </g>
+          );
+        })}
+        <path d={`M ${padding.left} ${height - padding.bottom} L ${width - padding.right} ${padding.top}`} stroke="#2f2f2f" strokeDasharray="7 6" />
+        {observations.map((point) => (
+          <circle
+            key={`${point.groupId}-${point.month}-${point.forecastUnits}-${point.actualUnits}`}
+            cx={xFor(point.actualUnits)}
+            cy={yFor(point.forecastUnits)}
+            r="4"
+            fill={Number(point.error || 0) >= 0 ? "#b45309" : "#00796b"}
+            opacity="0.62"
+          >
+            <title>{`${point.groupLabel}, ${formatChartMonth(point.month)}: actual ${formatUnits(point.actualUnits)}, forecast ${formatUnits(point.forecastUnits)}, error ${formatUnits(point.error)}`}</title>
+          </circle>
+        ))}
+        <text x={padding.left + chartWidth / 2} y={height - 10} textAnchor="middle">Actual</text>
+        <text x="18" y={padding.top + chartHeight / 2} textAnchor="middle" transform={`rotate(-90 18 ${padding.top + chartHeight / 2})`}>Forecast</text>
+      </svg>
+    </div>
+  );
+}
+
+function ErrorHistogram({ buckets, wide = false }) {
+  if (!buckets.length) {
+    return <div className="empty-chart">Error distribution will appear here.</div>;
+  }
+
+  const width = wide ? 1220 : 460;
+  const height = 360;
+  const padding = { top: 22, right: 18, bottom: 112, left: 52 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const maxCount = Math.max(...buckets.map((bucket) => bucket.count), 1);
+  const barWidth = (chartWidth / buckets.length) * 0.72;
+
+  return (
+    <div className="chart-wrap compact-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img">
+        <title>Error distribution histogram</title>
+        {[0, 0.5, 1].map((step) => {
+          const y = padding.top + chartHeight - step * chartHeight;
+          return (
+            <g key={step}>
+              <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} />
+              <text x={padding.left - 10} y={y + 5} textAnchor="end">
+                {formatUnits(maxCount * step)}
+              </text>
+            </g>
+          );
+        })}
+        {buckets.map((bucket, index) => {
+          const x = padding.left + (index / buckets.length) * chartWidth + chartWidth / buckets.length / 2 - barWidth / 2;
+          const barHeight = (bucket.count / maxCount) * chartHeight;
+          const label = `${formatDecimal(bucket.minErrorPct, 0)} to ${formatDecimal(bucket.maxErrorPct, 0)}%`;
+          return (
+            <g key={`${bucket.minErrorPct}-${bucket.maxErrorPct}`}>
+              <rect x={x} y={padding.top + chartHeight - barHeight} width={barWidth} height={Math.max(barHeight, 1)} fill="#6a4c93" opacity="0.78">
+                <title>{`${label}: ${formatUnits(bucket.count)} records`}</title>
+              </rect>
+              <text
+                x={x + barWidth / 2}
+                y={padding.top + chartHeight + 20}
+                textAnchor="end"
+                transform={`rotate(-90 ${x + barWidth / 2} ${padding.top + chartHeight + 20})`}
+              >
+                {label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function AccuracyLeaderboard({ rows }) {
+  if (!rows.length) {
+    return <div className="empty-chart">Accuracy leaderboard will appear after matched actuals are available.</div>;
+  }
+
+  const topRows = rows.slice(0, 8);
+  const maxMape = Math.max(...topRows.map((row) => Number(row.mape || 0)), 1);
+
+  return (
+    <div className="leaderboard-list">
+      {topRows.map((row) => (
+        <div key={`${row.level}-${row.groupId}`} className="leaderboard-row">
+          <div>
+            <strong>{row.rank}. {row.groupLabel}</strong>
+            <span>{formatUnits(row.sampleCount)} samples | bias {formatUnits(row.bias)}</span>
+          </div>
+          <div className="leaderboard-bar" aria-hidden="true">
+            <i style={{ width: `${Math.max((Number(row.mape || 0) / maxMape) * 100, 3)}%` }} />
+          </div>
+          <strong>{formatPercent(row.mape)}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ForecastPage() {
   const { apiFetch, user } = useAuth();
   const availableLevels = forecastLevels.filter((option) => user.forecastLevels.includes(option.value));
@@ -544,6 +870,19 @@ export default function ForecastPage() {
     error: "",
     series: []
   });
+  const [diagnosticsState, setDiagnosticsState] = useState({
+    loading: false,
+    error: "",
+    trend: [],
+    observations: [],
+    histogram: [],
+    leaderboard: []
+  });
+  const [dashboardCardState, setDashboardCardState] = useState({
+    loading: true,
+    error: "",
+    visibility: { ...defaultDashboardCardVisibility }
+  });
 
   useEffect(() => {
     if (availableLevels.length > 0 && !availableLevels.some((option) => option.value === level)) {
@@ -556,6 +895,43 @@ export default function ForecastPage() {
       setLevel("dealer");
     }
   }, [availableLevels, forecastMode, level]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadDashboardCards() {
+      try {
+        const response = await apiFetch("/api/v1/forecasts/dashboard-cards", {
+          signal: controller.signal
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || "Unable to load dashboard card settings.");
+        }
+
+        setDashboardCardState({
+          loading: false,
+          error: "",
+          visibility: buildDashboardCardVisibility(payload.cards || [])
+        });
+      } catch (error) {
+        if (error.name === "AbortError") {
+          return;
+        }
+
+        setDashboardCardState({
+          loading: false,
+          error: error.message || "Unable to load dashboard card settings.",
+          visibility: { ...defaultDashboardCardVisibility }
+        });
+      }
+    }
+
+    loadDashboardCards();
+
+    return () => controller.abort();
+  }, [apiFetch]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -658,6 +1034,7 @@ export default function ForecastPage() {
   const rollupLabel = level === "zone" ? "All zones" : level === "state" ? "All states" : dealerId ? "Selected dealer" : "All dealers";
   const breakdownContextLabel = selectedRegionLabel || rollupLabel;
   const productContextLabel = selectedVariant ? selectedVariant.name : selectedModel ? selectedModel.name : segment || "all products";
+  const currentMonthStart = useMemo(() => getCurrentMonthStart(), []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -694,8 +1071,10 @@ export default function ForecastPage() {
           params.set("variantId", variantId);
         }
 
+        params.set("startDate", currentMonthStart);
+        params.set("horizon", String(horizonMonths));
+
         if (forecastMode === "blended") {
-          params.set("horizon", String(horizonMonths));
           params.set("pageSize", "1000");
         }
 
@@ -764,7 +1143,7 @@ export default function ForecastPage() {
     loadForecastAndActuals();
 
     return () => controller.abort();
-  }, [apiFetch, forecastMode, groupId, horizonMonths, level, segment, modelId, variantId]);
+  }, [apiFetch, currentMonthStart, forecastMode, groupId, horizonMonths, level, segment, modelId, variantId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -793,6 +1172,9 @@ export default function ForecastPage() {
         if (variantId) {
           params.set("variantId", variantId);
         }
+
+        params.set("startDate", currentMonthStart);
+        params.set("horizon", String(horizonMonths));
 
         const response = await apiFetch(`/api/v1/forecasts/baseline?${params}`, {
           signal: controller.signal
@@ -832,16 +1214,110 @@ export default function ForecastPage() {
     loadSegmentBreakdown();
 
     return () => controller.abort();
-  }, [apiFetch, groupId, level, segment, modelId, variantId]);
+  }, [apiFetch, currentMonthStart, groupId, horizonMonths, level, segment, modelId, variantId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadDiagnostics() {
+      setDiagnosticsState({
+        loading: true,
+        error: "",
+        trend: [],
+        observations: [],
+        histogram: [],
+        leaderboard: []
+      });
+
+      try {
+        const params = new URLSearchParams();
+        params.set("level", level);
+        params.set("window", String(horizonMonths));
+
+        if (groupId) {
+          params.set("groupId", groupId);
+        }
+
+        if (segment) {
+          params.set("segment", segment);
+        }
+
+        if (modelId) {
+          params.set("modelId", modelId);
+        }
+
+        if (variantId) {
+          params.set("variantId", variantId);
+        }
+
+        const observationParams = new URLSearchParams(params);
+        observationParams.set("limit", "500");
+
+        const [trendResponse, observationsResponse, histogramResponse, leaderboardResponse] = await Promise.all([
+          apiFetch(`/api/v1/forecasts/metrics/trend?${params}`, { signal: controller.signal }),
+          apiFetch(`/api/v1/forecasts/metrics/observations?${observationParams}`, { signal: controller.signal }),
+          apiFetch(`/api/v1/forecasts/metrics/histogram?${params}`, { signal: controller.signal }),
+          apiFetch(`/api/v1/forecasts/metrics/leaderboard?${params}`, { signal: controller.signal })
+        ]);
+
+        const responses = [trendResponse, observationsResponse, histogramResponse, leaderboardResponse];
+        const failedResponse = responses.find((response) => !response.ok);
+        if (failedResponse) {
+          let message;
+          try {
+            const data = await failedResponse.json();
+            message = data.error;
+          } catch {
+            message = `Diagnostics API returned ${failedResponse.status}`;
+          }
+
+          throw new Error(message || "Forecast diagnostics are unavailable");
+        }
+
+        const [trendData, observationsData, histogramData, leaderboardData] = await Promise.all([
+          trendResponse.json(),
+          observationsResponse.json(),
+          histogramResponse.json(),
+          leaderboardResponse.json()
+        ]);
+
+        setDiagnosticsState({
+          loading: false,
+          error: "",
+          trend: trendData.trend || [],
+          observations: observationsData.observations || [],
+          histogram: histogramData.buckets || [],
+          leaderboard: leaderboardData.leaderboard || []
+        });
+      } catch (error) {
+        if (error.name === "AbortError") {
+          return;
+        }
+
+        setDiagnosticsState({
+          loading: false,
+          error: error.message || "Unable to load forecast diagnostics",
+          trend: [],
+          observations: [],
+          histogram: [],
+          leaderboard: []
+        });
+      }
+    }
+
+    loadDiagnostics();
+
+    return () => controller.abort();
+  }, [apiFetch, groupId, horizonMonths, level, segment, modelId, variantId]);
 
   const visibleSeries = useMemo(
-    () => limitSeriesMonths(forecastState.series, horizonMonths),
-    [forecastState.series, horizonMonths]
+    () => limitSeriesFromMonth(forecastState.series, horizonMonths, currentMonthStart),
+    [currentMonthStart, forecastState.series, horizonMonths]
   );
   const visibleBreakdownSeries = useMemo(() => {
     const normalizedSeries = groupId ? breakdownState.series : aggregateSeriesBySegment(breakdownState.series);
-    return limitSeriesMonths(normalizedSeries, horizonMonths);
-  }, [breakdownState.series, groupId, horizonMonths]);
+    return limitSeriesFromMonth(normalizedSeries, horizonMonths, currentMonthStart);
+  }, [breakdownState.series, currentMonthStart, groupId, horizonMonths]);
 
   const chartMessage = forecastState.loading
     ? "Loading live forecast data..."
@@ -858,13 +1334,21 @@ export default function ForecastPage() {
     ? summarizeSeries(visibleBreakdownSeries)
     : { total: 0, growth: 0, leader: null };
   const actualTotals = useMemo(
-    () => sumSeriesByMonth(actualState.series, "actuals").slice(-Math.max(horizonMonths, 6)),
-    [actualState.series, horizonMonths]
+    () =>
+      sumSeriesByMonth(actualState.series, "actuals")
+        .filter((point) => point.month <= currentMonthStart)
+        .slice(-Math.max(horizonMonths, 6)),
+    [actualState.series, currentMonthStart, horizonMonths]
   );
   const forecastTotals = useMemo(
     () => sumSeriesByMonth(visibleSeries, "forecast"),
     [visibleSeries]
   );
+  const cards = dashboardCardState.visibility;
+  const showForecastAnalytics = cards.trend || cards.segmentSplit;
+  const showAccuracyDiagnostics = cards.accuracyTrend || cards.biasTrend;
+  const showErrorDiagnostics = cards.actualPredicted || cards.errorDistribution;
+  const showIntervalControls = cards.forecastGraph || cards.regionalSegmentSplit || cards.segmentBreakdown;
 
   return (
     <>
@@ -1023,6 +1507,48 @@ export default function ForecastPage() {
       {referenceState.error && (
         <p className="page-notice">Reference data could not be loaded from the database: {referenceState.error}</p>
       )}
+      {dashboardCardState.error && <p className="page-notice">{dashboardCardState.error}</p>}
+
+      {showIntervalControls && (
+        <section className="forecast-display-controls" aria-label="Prediction interval display options">
+          <div>
+            <p className="eyebrow">Intervals</p>
+            <strong>{getBandLabel(intervalMode)}</strong>
+          </div>
+          <div className="interval-toggle-group">
+            <label>
+              <input
+                type="radio"
+                name="forecast-interval-mode"
+                value="point"
+                checked={intervalMode === "point"}
+                onChange={() => setIntervalMode("point")}
+              />
+              Point only
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="forecast-interval-mode"
+                value="80"
+                checked={intervalMode === "80"}
+                onChange={() => setIntervalMode("80")}
+              />
+              80% band
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="forecast-interval-mode"
+                value="95"
+                checked={intervalMode === "95"}
+                onChange={() => setIntervalMode("95")}
+              />
+              95% band
+            </label>
+          </div>
+        </section>
+      )}
 
       <section className="summary-grid forecast-summary-grid" aria-label="Forecast summary">
         <article className="metric">
@@ -1061,8 +1587,10 @@ export default function ForecastPage() {
         </article>
       </section>
 
+      {showForecastAnalytics && (
       <section className="analytics-grid" aria-label="Forecast analytics">
-        <article className="analytics-panel">
+        {cards.trend && (
+        <article className={`analytics-panel ${!cards.segmentSplit ? "full-width-panel" : ""}`}>
           <div className="panel-heading compact">
             <div>
               <p className="eyebrow">Trend</p>
@@ -1072,7 +1600,7 @@ export default function ForecastPage() {
           {(forecastState.error || actualState.error) && (
             <p className="notice compact-notice">{forecastState.error || actualState.error}</p>
           )}
-          <TrendChart actualTotals={actualTotals} forecastTotals={forecastTotals} />
+          <TrendChart actualTotals={actualTotals} forecastTotals={forecastTotals} wide={!cards.segmentSplit} />
           <div className="chart-legend trend-legend">
             <span>
               <i className="legend-line actual-line" />
@@ -1084,8 +1612,10 @@ export default function ForecastPage() {
             </span>
           </div>
         </article>
+        )}
 
-        <article className="analytics-panel">
+        {cards.segmentSplit && (
+        <article className={`analytics-panel ${!cards.trend ? "full-width-panel" : ""}`}>
           <div className="panel-heading compact">
             <div>
               <p className="eyebrow">Segment split</p>
@@ -1096,51 +1626,97 @@ export default function ForecastPage() {
             </div>
           </div>
           {breakdownState.error && <p className="notice compact-notice">{breakdownState.error}</p>}
-          <ContributionChart series={visibleBreakdownSeries} message={breakdownMessage} />
+          <ContributionChart series={visibleBreakdownSeries} message={breakdownMessage} wide={!cards.trend} />
         </article>
+        )}
       </section>
+      )}
 
+      {showAccuracyDiagnostics && (
+      <section className="analytics-grid" aria-label="Forecast accuracy diagnostics">
+        {cards.accuracyTrend && (
+        <article className={`analytics-panel ${!cards.biasTrend ? "full-width-panel" : ""}`}>
+          <div className="panel-heading compact">
+            <div>
+              <p className="eyebrow">Accuracy</p>
+              <h2>MAPE / MAE / RMSE trend</h2>
+              <p className="panel-subcopy">Rolling matched actuals for {breakdownContextLabel}</p>
+            </div>
+          </div>
+          {diagnosticsState.error && <p className="notice compact-notice">{diagnosticsState.error}</p>}
+          <MetricTrendChart data={diagnosticsState.trend} wide={!cards.biasTrend} />
+        </article>
+        )}
+
+        {cards.biasTrend && (
+        <article className={`analytics-panel ${!cards.accuracyTrend ? "full-width-panel" : ""}`}>
+          <div className="panel-heading compact">
+            <div>
+              <p className="eyebrow">Bias</p>
+              <h2>Forecast bias by month</h2>
+              <p className="panel-subcopy">Positive bars are over-forecast, negative bars are under-forecast.</p>
+            </div>
+          </div>
+          <BiasChart data={diagnosticsState.trend} wide={!cards.accuracyTrend} />
+        </article>
+        )}
+      </section>
+      )}
+
+      {showErrorDiagnostics && (
+      <section className="analytics-grid" aria-label="Forecast error diagnostics">
+        {cards.actualPredicted && (
+        <article className={`analytics-panel ${!cards.errorDistribution ? "full-width-panel" : ""}`}>
+          <div className="panel-heading compact">
+            <div>
+              <p className="eyebrow">Calibration</p>
+              <h2>Actual vs predicted</h2>
+            </div>
+          </div>
+          <ActualPredictedScatter observations={diagnosticsState.observations} wide={!cards.errorDistribution} />
+        </article>
+        )}
+
+        {cards.errorDistribution && (
+        <article className={`analytics-panel ${!cards.actualPredicted ? "full-width-panel" : ""}`}>
+          <div className="panel-heading compact">
+            <div>
+              <p className="eyebrow">Error spread</p>
+              <h2>Error distribution</h2>
+            </div>
+          </div>
+          <ErrorHistogram buckets={diagnosticsState.histogram} wide={!cards.actualPredicted} />
+        </article>
+        )}
+      </section>
+      )}
+
+      {cards.leaderboard && (
+      <section className="forecast-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Leaderboard</p>
+            <h2>Accuracy leaderboard by {availableLevels.find((item) => item.value === level)?.label.toLowerCase()}</h2>
+            <p className="panel-subcopy">Ranked by lowest MAPE across matched actuals.</p>
+          </div>
+          <span className={diagnosticsState.loading ? "source-pill" : "source-pill live"}>
+            {diagnosticsState.loading ? "Loading" : "Diagnostics API"}
+          </span>
+        </div>
+        <AccuracyLeaderboard rows={diagnosticsState.leaderboard} />
+      </section>
+      )}
+
+      {cards.forecastGraph && (
       <section className="forecast-panel">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Forecast graph</p>
             <h2>Monthly units by {availableLevels.find((item) => item.value === level)?.label.toLowerCase()}</h2>
           </div>
-          <div className="interval-toggle-group" aria-label="Prediction interval display options">
-            <label>
-              <input
-                type="radio"
-                name="forecast-interval-mode"
-                value="point"
-                checked={intervalMode === "point"}
-                onChange={() => setIntervalMode("point")}
-              />
-              Point only
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="forecast-interval-mode"
-                value="80"
-                checked={intervalMode === "80"}
-                onChange={() => setIntervalMode("80")}
-              />
-              80% band
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="forecast-interval-mode"
-                value="95"
-                checked={intervalMode === "95"}
-                onChange={() => setIntervalMode("95")}
-              />
-              95% band
-            </label>
-            <span className={hasForecastData ? "source-pill live" : "source-pill"}>
-              {forecastState.loading ? "Loading" : hasForecastData ? forecastMode === "blended" ? "Blended API" : "Live API" : "No data"}
-            </span>
-          </div>
+          <span className={hasForecastData ? "source-pill live" : "source-pill"}>
+            {forecastState.loading ? "Loading" : hasForecastData ? forecastMode === "blended" ? "Blended API" : "Live API" : "No data"}
+          </span>
         </div>
 
         {forecastState.error && <p className="notice">{forecastState.error}</p>}
@@ -1190,7 +1766,9 @@ export default function ForecastPage() {
           </div>
         )}
       </section>
+      )}
 
+      {cards.regionalSegmentSplit && (
       <section className="forecast-panel">
         <div className="panel-heading">
           <div>
@@ -1232,8 +1810,9 @@ export default function ForecastPage() {
           </div>
         )}
       </section>
+      )}
 
-      {hasBreakdownData && (
+      {cards.segmentBreakdown && hasBreakdownData && (
         <section className="data-table" aria-label="Segment breakdown data table">
           <div className="panel-heading compact">
             <div>
@@ -1276,7 +1855,7 @@ export default function ForecastPage() {
         </section>
       )}
 
-      {hasForecastData && (
+      {cards.forecastData && hasForecastData && (
         <section className="data-table" aria-label="Forecast data table">
           <div className="panel-heading compact">
             <div>

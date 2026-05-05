@@ -175,6 +175,201 @@ const forecastMetricsResponseSchema = {
   }
 };
 
+const forecastMetricAnalyticsParameters = [
+  {
+    in: "query",
+    name: "level",
+    schema: { enum: ["dealer", "state", "zone"], type: "string" },
+    description: "Forecast hierarchy level for matched forecast-vs-actual diagnostics."
+  },
+  {
+    in: "query",
+    name: "groupId",
+    schema: { type: "string" },
+    description: "Optional dealer, state, or zone identifier within the selected level."
+  },
+  {
+    in: "query",
+    name: "segment",
+    schema: { type: "string" },
+    description: "Optional vehicle segment filter."
+  },
+  {
+    in: "query",
+    name: "modelId",
+    schema: { type: "string" },
+    description: "Optional vehicle model filter."
+  },
+  {
+    in: "query",
+    name: "variantId",
+    schema: { type: "string" },
+    description: "Optional vehicle variant filter."
+  },
+  {
+    in: "query",
+    name: "window",
+    schema: { default: 6, enum: [1, 3, 6, 12, 24], type: "integer" },
+    description: "Number of recent actualized months to include."
+  }
+];
+
+const forecastMetricTrendResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    filters: { type: "object" },
+    trend: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          month: { format: "date", type: "string" },
+          mape: { nullable: true, type: "number" },
+          mae: { nullable: true, type: "number" },
+          rmse: { nullable: true, type: "number" },
+          bias: { nullable: true, type: "number" },
+          biasPct: { nullable: true, type: "number" },
+          sampleCount: { type: "integer" }
+        }
+      }
+    }
+  }
+};
+
+const forecastObservationSchema = {
+  type: "object",
+  properties: {
+    level: { type: "string" },
+    groupId: { type: "string" },
+    groupLabel: { type: "string" },
+    segment: { nullable: true, type: "string" },
+    modelId: { nullable: true, type: "string" },
+    variantId: { nullable: true, type: "string" },
+    month: { format: "date", type: "string" },
+    forecastUnits: { type: "number" },
+    actualUnits: { type: "number" },
+    error: { type: "number" },
+    absoluteError: { type: "number" },
+    percentageError: { nullable: true, type: "number" },
+    absolutePercentageError: { nullable: true, type: "number" },
+    lower80: { type: "number" },
+    upper80: { type: "number" },
+    lower95: { type: "number" },
+    upper95: { type: "number" },
+    validationMape: { nullable: true, type: "number" },
+    validationRmse: { nullable: true, type: "number" },
+    validationMae: { nullable: true, type: "number" }
+  }
+};
+
+const forecastObservationResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    filters: { type: "object" },
+    limit: { type: "integer" },
+    observations: {
+      type: "array",
+      items: forecastObservationSchema
+    }
+  }
+};
+
+const forecastErrorHistogramResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    filters: { type: "object" },
+    bucketSize: { type: "integer" },
+    buckets: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          minErrorPct: { type: "number" },
+          maxErrorPct: { type: "number" },
+          count: { type: "integer" }
+        }
+      }
+    }
+  }
+};
+
+const forecastAccuracyLeaderboardResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    filters: { type: "object" },
+    leaderboard: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          rank: { type: "integer" },
+          level: { type: "string" },
+          groupId: { type: "string" },
+          groupLabel: { type: "string" },
+          mape: { nullable: true, type: "number" },
+          mae: { nullable: true, type: "number" },
+          rmse: { nullable: true, type: "number" },
+          bias: { nullable: true, type: "number" },
+          biasPct: { nullable: true, type: "number" },
+          sampleCount: { type: "integer" }
+        }
+      }
+    }
+  }
+};
+
+const calibrationHistoryResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    limit: { type: "integer" },
+    runs: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          runId: { type: "integer" },
+          forecastType: { type: "string" },
+          horizonMonths: { type: "integer" },
+          completedAt: { format: "date-time", type: "string" },
+          coverage80: { nullable: true, type: "number" },
+          coverage95: { nullable: true, type: "number" },
+          avgWidth80: { nullable: true, type: "number" },
+          avgWidth95: { nullable: true, type: "number" },
+          sampleCount: { type: "integer" }
+        }
+      }
+    }
+  }
+};
+
+const dashboardCardSchema = {
+  type: "object",
+  properties: {
+    key: { type: "string" },
+    label: { type: "string" },
+    category: { enum: ["Graphs", "Tables"], type: "string" },
+    displayOrder: { type: "integer" },
+    enabled: { type: "boolean" },
+    updatedAt: { format: "date-time", type: "string" }
+  }
+};
+
+const dashboardCardsResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    cards: {
+      type: "array",
+      items: dashboardCardSchema
+    }
+  }
+};
+
 const forecastEventSchema = {
   type: "object",
   properties: {
@@ -482,6 +677,130 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
           }
         }
       },
+      "/api/v1/forecasts/metrics/trend": {
+        get: {
+          summary: "Forecast metric trend",
+          description: "Returns month-level MAPE, MAE, RMSE, bias, and sample counts from matched forecast and actual observations.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: forecastMetricAnalyticsParameters,
+          responses: {
+            200: {
+              description: "Forecast metric trend response",
+              content: {
+                "application/json": {
+                  schema: forecastMetricTrendResponseSchema
+                }
+              }
+            },
+            400: { description: "Invalid query parameters" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        }
+      },
+      "/api/v1/forecasts/metrics/observations": {
+        get: {
+          summary: "Matched forecast and actual observations",
+          description: "Returns individual matched forecast-vs-actual points for scatter plots and detailed error diagnostics.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            ...forecastMetricAnalyticsParameters,
+            {
+              in: "query",
+              name: "limit",
+              schema: { default: 500, minimum: 1, maximum: 1000, type: "integer" },
+              description: "Maximum number of observations to return."
+            }
+          ],
+          responses: {
+            200: {
+              description: "Matched observation response",
+              content: {
+                "application/json": {
+                  schema: forecastObservationResponseSchema
+                }
+              }
+            },
+            400: { description: "Invalid query parameters" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        }
+      },
+      "/api/v1/forecasts/metrics/histogram": {
+        get: {
+          summary: "Forecast error histogram",
+          description: "Returns percentage-error buckets from matched forecast and actual observations.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            ...forecastMetricAnalyticsParameters,
+            {
+              in: "query",
+              name: "bucketSize",
+              schema: { default: 10, minimum: 5, maximum: 50, type: "integer" },
+              description: "Percentage-point width of each error bucket."
+            }
+          ],
+          responses: {
+            200: {
+              description: "Forecast error histogram response",
+              content: {
+                "application/json": {
+                  schema: forecastErrorHistogramResponseSchema
+                }
+              }
+            },
+            400: { description: "Invalid query parameters" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        }
+      },
+      "/api/v1/forecasts/metrics/leaderboard": {
+        get: {
+          summary: "Forecast accuracy leaderboard",
+          description: "Returns forecast groups ranked by lowest MAPE, with MAE, RMSE, bias, and sample count.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: forecastMetricAnalyticsParameters,
+          responses: {
+            200: {
+              description: "Forecast accuracy leaderboard response",
+              content: {
+                "application/json": {
+                  schema: forecastAccuracyLeaderboardResponseSchema
+                }
+              }
+            },
+            400: { description: "Invalid query parameters" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        }
+      },
+      "/api/v1/forecasts/dashboard-cards": {
+        get: {
+          summary: "Forecast dashboard card settings",
+          description: "Returns the global card visibility settings used by the forecast dashboard.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            200: {
+              description: "Forecast dashboard card settings response",
+              content: {
+                "application/json": {
+                  schema: dashboardCardsResponseSchema
+                }
+              }
+            },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        }
+      },
       "/api/v1/forecasts/regional": buildForecastPath(
         "Regional forecasts",
         "Returns regional forecast records using zone-level stored forecasts."
@@ -503,6 +822,80 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
             200: { description: "Current forecast administration status" },
             401: { description: "Authentication required" },
             403: { description: "Permission denied" }
+          }
+        }
+      },
+      "/api/v1/forecasts/admin/calibration-history": {
+        get: {
+          summary: "Forecast calibration history",
+          description: "Returns completed forecast run calibration coverage and interval-width history for admin charts.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "query",
+              name: "limit",
+              schema: { default: 12, minimum: 1, maximum: 1000, type: "integer" },
+              description: "Maximum number of completed runs to return."
+            }
+          ],
+          responses: {
+            200: {
+              description: "Forecast calibration history response",
+              content: {
+                "application/json": {
+                  schema: calibrationHistoryResponseSchema
+                }
+              }
+            },
+            400: { description: "Invalid query parameters" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        }
+      },
+      "/api/v1/forecasts/admin/dashboard-cards": {
+        put: {
+          summary: "Update forecast dashboard cards",
+          description: "Updates global forecast dashboard card visibility. This endpoint is restricted to Admin users.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["cards"],
+                  properties: {
+                    cards: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        required: ["key", "enabled"],
+                        properties: {
+                          key: { type: "string" },
+                          enabled: { type: "boolean" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: "Updated dashboard card settings",
+              content: {
+                "application/json": {
+                  schema: dashboardCardsResponseSchema
+                }
+              }
+            },
+            400: { description: "Invalid dashboard card payload" },
+            401: { description: "Authentication required" },
+            403: { description: "Admin role required" }
           }
         }
       },
