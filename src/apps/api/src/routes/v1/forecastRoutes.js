@@ -12,6 +12,14 @@ import {
   getVersionedForecastPayload
 } from "../../services/forecastQueryService.js";
 import { getForecastMetricsPayload } from "../../services/forecastMetricsService.js";
+import {
+  getCalibrationHistoryPayload,
+  getForecastAccuracyLeaderboardPayload,
+  getForecastErrorHistogramPayload,
+  getForecastMetricTrendPayload,
+  getForecastObservationPayload
+} from "../../services/forecastAnalyticsService.js";
+import { ForecastDashboardCardService } from "../../services/forecastDashboardCardService.js";
 
 const router = Router();
 
@@ -29,6 +37,26 @@ router.get("/actuals", requirePermission(permissions.viewForecast), async (reque
 
 router.get("/metrics", requirePermission(permissions.viewForecast), async (request, response) => {
   await respondWithServiceCall(response, () => getForecastMetricsPayload(request.user, request.query));
+});
+
+router.get("/metrics/trend", requirePermission(permissions.viewForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getForecastMetricTrendPayload(request.user, request.query));
+});
+
+router.get("/metrics/observations", requirePermission(permissions.viewForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getForecastObservationPayload(request.user, request.query));
+});
+
+router.get("/metrics/histogram", requirePermission(permissions.viewForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getForecastErrorHistogramPayload(request.user, request.query));
+});
+
+router.get("/metrics/leaderboard", requirePermission(permissions.viewForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getForecastAccuracyLeaderboardPayload(request.user, request.query));
+});
+
+router.get("/dashboard-cards", requirePermission(permissions.viewForecast), async (_request, response) => {
+  await respondWithServiceCall(response, () => ForecastDashboardCardService.findAll());
 });
 
 router.get("/dealer-targets", requirePermission(permissions.viewForecast), async (request, response) => {
@@ -52,6 +80,14 @@ router.get("/admin/status", requirePermission(permissions.manageForecast), async
     ok: true,
     ...(await ForecastAdminService.getStatus())
   }));
+});
+
+router.get("/admin/calibration-history", requirePermission(permissions.manageForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getCalibrationHistoryPayload(request.user, request.query));
+});
+
+router.put("/admin/dashboard-cards", requireAdmin, async (request, response) => {
+  await respondWithServiceCall(response, () => ForecastDashboardCardService.updateCards(request.body?.cards));
 });
 
 router.post("/admin/clear", requirePermission(permissions.manageForecast), async (_request, response) => {
@@ -111,6 +147,18 @@ async function respondWithServiceCall(response, action, codeMap = {}, successSta
       error: error.message
     });
   }
+}
+
+function requireAdmin(request, response, next) {
+  if (request.user?.role !== "Admin") {
+    response.status(403).json({
+      ok: false,
+      error: "Only Admin users can manage dashboard cards"
+    });
+    return;
+  }
+
+  next();
 }
 
 export default router;

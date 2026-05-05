@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import Forecast from "./pages/Forecast.jsx";
 import ManageForecast from "./pages/ManageForecast.jsx";
 import ForecastEvents from "./pages/ForecastEvents.jsx";
+import DashboardCards from "./pages/DashboardCards.jsx";
 import LoginPage from "./pages/Login.jsx";
 import { useAuth } from "./auth/AuthContext.jsx";
 
 function resolvePageFromHash(hash) {
   if (hash === "#forecast") {
-    return "forecast";
+    return "home";
   }
 
   if (hash === "#admin") {
@@ -18,12 +19,14 @@ function resolvePageFromHash(hash) {
     return "forecast-events";
   }
 
+  if (hash === "#dashboard-cards") {
+    return "dashboard-cards";
+  }
+
   return "home";
 }
 
-function HomePage({ onPrimaryAction, user }) {
-  const canViewForecast = user.permissions.includes("View Forecast");
-
+function HomePage({ user }) {
   return (
     <section className="home-grid">
       <div className="home-copy">
@@ -36,9 +39,6 @@ function HomePage({ onPrimaryAction, user }) {
         <p className="home-user-meta">
           Signed in as <strong>{user.name}</strong> · {user.role}
         </p>
-        <button type="button" onClick={onPrimaryAction}>
-          {canViewForecast ? "Open forecast" : "Stay on home"}
-        </button>
       </div>
       <img
         src="/resources/images/sales-planning-workspace.jpg"
@@ -54,6 +54,9 @@ export default function App() {
   const [manageMenuOpen, setManageMenuOpen] = useState(false);
   const canViewForecast = user?.permissions?.includes("View Forecast");
   const canManageForecast = user?.permissions?.includes("Manage Forecast");
+  const isAdmin = user?.role === "Admin";
+  const forecastHomeRoles = new Set(["Admin", "National Head", "Regional Head", "Dealer Head", "Dealer Manager"]);
+  const usesForecastHome = Boolean(user && forecastHomeRoles.has(user.role) && canViewForecast);
 
   useEffect(() => {
     function handleHashChange() {
@@ -66,13 +69,13 @@ export default function App() {
 
   function navigate(nextPage) {
     window.location.hash =
-      nextPage === "forecast"
-        ? "forecast"
-        : nextPage === "admin"
+      nextPage === "admin"
           ? "admin"
           : nextPage === "forecast-events"
             ? "forecast-events"
-            : "home";
+            : nextPage === "dashboard-cards"
+              ? "dashboard-cards"
+              : "home";
     setPage(nextPage);
   }
 
@@ -81,14 +84,14 @@ export default function App() {
       return;
     }
 
-    if (page === "forecast" && !canViewForecast) {
-      navigate("home");
-    }
-
     if ((page === "admin" || page === "forecast-events") && !canManageForecast) {
       navigate("home");
     }
-  }, [canManageForecast, canViewForecast, isAuthenticated, page, user]);
+
+    if (page === "dashboard-cards" && !isAdmin) {
+      navigate("home");
+    }
+  }, [canManageForecast, canViewForecast, isAdmin, isAuthenticated, page, user]);
 
   if (booting) {
     return (
@@ -111,11 +114,6 @@ export default function App() {
         <a className={page === "home" ? "active" : ""} href="#home" onClick={() => navigate("home")}>
           Home
         </a>
-        {canViewForecast && (
-          <a className={page === "forecast" ? "active" : ""} href="#forecast" onClick={() => navigate("forecast")}>
-            Forecast
-          </a>
-        )}
         {canManageForecast && (
           <div
             className={`nav-menu ${manageMenuOpen ? "open" : ""}`}
@@ -124,7 +122,7 @@ export default function App() {
           >
             <button
               type="button"
-              className={page === "admin" || page === "forecast-events" ? "active nav-menu-button" : "nav-menu-button"}
+              className={page === "admin" || page === "forecast-events" || page === "dashboard-cards" ? "active nav-menu-button" : "nav-menu-button"}
               onClick={() => setManageMenuOpen((isOpen) => !isOpen)}
               onFocus={() => setManageMenuOpen(true)}
             >
@@ -151,6 +149,18 @@ export default function App() {
               >
                 Forecast Events
               </a>
+              {isAdmin && (
+                <a
+                  className={page === "dashboard-cards" ? "active" : ""}
+                  href="#dashboard-cards"
+                  onClick={() => {
+                    setManageMenuOpen(false);
+                    navigate("dashboard-cards");
+                  }}
+                >
+                  Dashboard Cards
+                </a>
+              )}
             </div>
           </div>
         )}
@@ -163,14 +173,16 @@ export default function App() {
         </button>
       </nav>
 
-      {page === "forecast" && canViewForecast ? (
+      {page === "home" && usesForecastHome ? (
         <Forecast />
       ) : page === "admin" && canManageForecast ? (
         <ManageForecast />
       ) : page === "forecast-events" && canManageForecast ? (
         <ForecastEvents />
+      ) : page === "dashboard-cards" && isAdmin ? (
+        <DashboardCards />
       ) : (
-        <HomePage onPrimaryAction={() => navigate(canViewForecast ? "forecast" : "home")} user={user} />
+        <HomePage user={user} />
       )}
     </main>
   );

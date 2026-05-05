@@ -4,6 +4,32 @@ import { canAccessForecastLevel, getScope, isGroupAllowed } from "../auth/access
 import { ForecastCacheService } from "./forecastCacheService.js";
 
 const allowedLevels = new Set(["dealer", "state", "zone"]);
+const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseOptionalDate(value, fieldName) {
+  if (!value) {
+    return null;
+  }
+
+  if (!isoDatePattern.test(value) || Number.isNaN(Date.parse(value))) {
+    throw createHttpError(400, `${fieldName} must be a valid ISO date in YYYY-MM-DD format`);
+  }
+
+  return value;
+}
+
+function parseOptionalHorizon(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const horizon = Number(value);
+  if (!Number.isInteger(horizon) || horizon < 1 || horizon > 60) {
+    throw createHttpError(400, "horizon must be an integer between 1 and 60");
+  }
+
+  return horizon;
+}
 
 export const forecastEndpointConfigs = {
   baseline: {
@@ -39,6 +65,13 @@ export async function getBaselineForecastPayload(user, query) {
   const modelId = query.modelId || query.ModelId;
   const variantId = query.variantId || query.VariantId;
   const breakdown = query.breakdown;
+  const startDate = parseOptionalDate(query.startDate, "startDate");
+  const endDate = parseOptionalDate(query.endDate, "endDate");
+  const horizon = parseOptionalHorizon(query.horizon);
+
+  if (startDate && endDate && Date.parse(startDate) > Date.parse(endDate)) {
+    throw createHttpError(400, "startDate must be earlier than or equal to endDate");
+  }
 
   validateLevel(level);
   await ensureUserScopeAccess(user, level || "zone", groupId);
@@ -55,7 +88,10 @@ export async function getBaselineForecastPayload(user, query) {
     segment: segment || null,
     modelId: modelId || null,
     variantId: variantId || null,
-    breakdown: breakdown || null
+    breakdown: breakdown || null,
+    startDate,
+    endDate,
+    horizon
   };
   const cacheKey = buildCacheKey(latestRun.run_id, {
     ...filters,
@@ -74,7 +110,10 @@ export async function getBaselineForecastPayload(user, query) {
     modelId,
     variantId,
     breakdown,
-    scope: getScope(user)
+    scope: getScope(user),
+    startDate,
+    endDate,
+    horizon
   });
 
   const payload = {
@@ -151,7 +190,10 @@ export async function getVersionedForecastPayload(user, endpointConfig, filters)
               scope,
               segment: filters.segment,
               modelId: filters.modelId,
-              variantId: filters.variantId
+              variantId: filters.variantId,
+              startDate: filters.startDate,
+              endDate: filters.endDate,
+              horizon: filters.horizon
             }),
             filters,
             scope
@@ -410,7 +452,10 @@ async function buildBlendedForecastResult(filters, scope) {
     scope,
     segment: filters.segment,
     modelId: filters.modelId,
-    variantId: filters.variantId
+    variantId: filters.variantId,
+    startDate: filters.startDate,
+    endDate: filters.endDate,
+    horizon: filters.horizon
   });
   const scopedDealerRows = await filterDealerRowsByRegion(dealerRows, filters.region, scope);
   const dealerZones = await findDealerZones(scopedDealerRows.map((row) => row.group_id), scope);
@@ -423,7 +468,10 @@ async function buildBlendedForecastResult(filters, scope) {
     scope: zoneScope,
     segment: filters.segment,
     modelId: filters.modelId,
-    variantId: filters.variantId
+    variantId: filters.variantId,
+    startDate: filters.startDate,
+    endDate: filters.endDate,
+    horizon: filters.horizon
   });
   const zoneRowsByKey = new Map(
     zoneRows

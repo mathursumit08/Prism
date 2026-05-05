@@ -87,6 +87,91 @@ function parseTimestampToNanoseconds(value) {
   return BigInt(baseMilliseconds) * 1_000_000n + fractionalNanoseconds;
 }
 
+function CalibrationCoverageChart({ runs }) {
+  if (!runs.length) {
+    return <div className="empty-chart">Calibration history will appear after completed forecast runs.</div>;
+  }
+
+  const width = 920;
+  const height = 320;
+  const padding = { top: 24, right: 28, bottom: 78, left: 64 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const xAxisLabelY = padding.top + chartHeight + 14;
+  const xFor = (index) => padding.left + (index / Math.max(runs.length - 1, 1)) * chartWidth;
+  const yFor = (value) => padding.top + chartHeight - (Number(value || 0) / 100) * chartHeight;
+  const buildPath = (key) =>
+    runs
+      .filter((run) => run[key] !== null && run[key] !== undefined)
+      .map((run, index, points) => {
+        const originalIndex = runs.indexOf(run);
+        return `${index === 0 ? "M" : "L"} ${xFor(originalIndex)} ${yFor(points[index][key])}`;
+      })
+      .join(" ");
+
+  return (
+    <>
+      <div className="chart-wrap">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img">
+          <title>Calibration coverage history</title>
+          {[0, 25, 50, 75, 100].map((value) => (
+            <g key={value}>
+              <line x1={padding.left} x2={width - padding.right} y1={yFor(value)} y2={yFor(value)} />
+              <text x={padding.left - 12} y={yFor(value) + 5} textAnchor="end">
+                {value}%
+              </text>
+            </g>
+          ))}
+          {[80, 95].map((target) => (
+            <line key={target} className="target-line" x1={padding.left} x2={width - padding.right} y1={yFor(target)} y2={yFor(target)} />
+          ))}
+          {runs.map((run, index) => (
+            <text
+              key={run.runId}
+              x={xFor(index)}
+              y={xAxisLabelY}
+              textAnchor="end"
+              transform={`rotate(-90 ${xFor(index)} ${xAxisLabelY})`}
+            >
+              {formatDateTime(run.completedAt)}
+            </text>
+          ))}
+          <path d={buildPath("coverage80")} stroke="#00796b" strokeWidth="3" />
+          <path d={buildPath("coverage95")} stroke="#6a4c93" strokeWidth="3" />
+          {runs.map((run, index) => (
+            <g key={run.runId}>
+              {run.coverage80 !== null && (
+                <circle cx={xFor(index)} cy={yFor(run.coverage80)} r="3" fill="#00796b">
+                  <title>{`80% coverage: ${formatPercent(run.coverage80)} | ${formatUnits(run.sampleCount)} samples`}</title>
+                </circle>
+              )}
+              {run.coverage95 !== null && (
+                <circle cx={xFor(index)} cy={yFor(run.coverage95)} r="3" fill="#6a4c93">
+                  <title>{`95% coverage: ${formatPercent(run.coverage95)} | ${formatUnits(run.sampleCount)} samples`}</title>
+                </circle>
+              )}
+            </g>
+          ))}
+        </svg>
+      </div>
+      <div className="chart-legend">
+        <span>
+          <i className="legend-line" style={{ borderTopColor: "#00796b" }} />
+          80% coverage
+        </span>
+        <span>
+          <i className="legend-line" style={{ borderTopColor: "#6a4c93" }} />
+          95% coverage
+        </span>
+        <span>
+          <i className="legend-line target-legend" />
+          Targets
+        </span>
+      </div>
+    </>
+  );
+}
+
 export default function ManageForecastPage() {
   const { apiFetch } = useAuth();
   const [selectedHorizon, setSelectedHorizon] = useState(6);
@@ -99,6 +184,11 @@ export default function ManageForecastPage() {
     loading: false,
     message: "",
     error: ""
+  });
+  const [calibrationHistoryState, setCalibrationHistoryState] = useState({
+    loading: true,
+    error: "",
+    runs: []
   });
 
   useEffect(() => {
@@ -144,6 +234,43 @@ export default function ManageForecastPage() {
       window.clearInterval(intervalId);
     };
   }, [adminState.data?.generation?.running, apiFetch]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadCalibrationHistory() {
+      try {
+        const response = await apiFetch("/api/v1/forecasts/admin/calibration-history?limit=12", {
+          signal: controller.signal
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || "Unable to load calibration history.");
+        }
+
+        setCalibrationHistoryState({
+          loading: false,
+          error: "",
+          runs: payload.runs || []
+        });
+      } catch (error) {
+        if (error.name === "AbortError") {
+          return;
+        }
+
+        setCalibrationHistoryState({
+          loading: false,
+          error: error.message || "Unable to load calibration history.",
+          runs: []
+        });
+      }
+    }
+
+    loadCalibrationHistory();
+
+    return () => controller.abort();
+  }, [apiFetch, adminState.data?.lastSuccessfulRun?.runId]);
 
   async function refreshStatus() {
     setAdminState((current) => ({
@@ -486,6 +613,20 @@ export default function ManageForecastPage() {
           ) : (
             <p className="notice compact-notice">Calibration metrics will appear after the next completed forecast run.</p>
           )}
+        </article>
+
+        <article className="analytics-panel">
+          <div className="panel-heading compact">
+            <div>
+              <p className="eyebrow">Calibration history</p>
+              <h2>Coverage against interval targets</h2>
+            </div>
+            <span className={calibrationHistoryState.loading ? "source-pill" : "source-pill live"}>
+              {calibrationHistoryState.loading ? "Loading" : "History API"}
+            </span>
+          </div>
+          {calibrationHistoryState.error && <p className="notice compact-notice">{calibrationHistoryState.error}</p>}
+          <CalibrationCoverageChart runs={calibrationHistoryState.runs} />
         </article>
 
         <article className="analytics-panel">

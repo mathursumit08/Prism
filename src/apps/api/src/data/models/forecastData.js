@@ -188,7 +188,7 @@ export const ForecastData = {
    * Reads forecast rows from the latest completed run with optional hierarchy filters.
    */
   async findLatest(
-    { level, groupId, segment, modelId, variantId, breakdown, forecastType = "baseline", scope },
+    { level, groupId, segment, modelId, variantId, breakdown, forecastType = "baseline", scope, startDate, endDate, horizon },
     db = pool
   ) {
     const latestRunId = await findLatestCompletedRunId(forecastType, db);
@@ -207,7 +207,10 @@ export const ForecastData = {
           modelId,
           variantId,
           forecastType,
-          scope
+          scope,
+          startDate,
+          endDate,
+          horizon
         },
         db
       );
@@ -222,7 +225,10 @@ export const ForecastData = {
           modelId,
           variantId,
           forecastType,
-          scope
+          scope,
+          startDate,
+          endDate,
+          horizon
         },
         db
       );
@@ -246,7 +252,7 @@ async function findLatestCompletedRunId(forecastType, db = pool) {
 }
 
 async function findLatestExactRows(
-  { latestRunId, level, groupId, segment, modelId, variantId, forecastType, scope },
+  { latestRunId, level, groupId, segment, modelId, variantId, forecastType, scope, startDate, endDate, horizon },
   db = pool
 ) {
   const conditions = ["fd.forecast_type = $1"];
@@ -284,9 +290,13 @@ async function findLatestExactRows(
   }
 
   appendScopeCondition(conditions, values, scope);
+  appendDateConditions(conditions, values, startDate, endDate);
+  values.push(Number.isInteger(Number(horizon)) ? Number(horizon) : null);
+  const horizonParameter = `$${values.length}`;
 
   const result = await db.query(
     `
+      WITH ranked AS (
       SELECT
         fr.run_id,
         fr.horizon_months,
@@ -309,13 +319,21 @@ async function findLatestExactRows(
         fd.validation_mape,
         fd.data_quality,
         fd.bias_correction,
-        fd.generated_at
+        fd.generated_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY fd.level, fd.group_id, fd.segment, fd.model_id, fd.variant_id
+          ORDER BY fd.forecast_month
+        ) AS horizon_month
       FROM forecast_data fd
       JOIN forecast_runs fr ON fr.run_id = fd.run_id
       WHERE ${conditions.join(" AND ")}
         AND fd.run_id = $2
         AND fr.status = 'completed'
-      ORDER BY fd.level, fd.group_id, fd.forecast_month
+      )
+      SELECT *
+      FROM ranked
+      WHERE (${horizonParameter}::INTEGER IS NULL OR horizon_month <= ${horizonParameter}::INTEGER)
+      ORDER BY level, group_id, forecast_month
     `,
     values
   );
@@ -324,7 +342,7 @@ async function findLatestExactRows(
 }
 
 async function findLatestSegmentBreakdownRows(
-  { latestRunId, level, groupId, segment, modelId, variantId, forecastType, scope },
+  { latestRunId, level, groupId, segment, modelId, variantId, forecastType, scope, startDate, endDate, horizon },
   db = pool
 ) {
   const conditions = [
@@ -364,9 +382,13 @@ async function findLatestSegmentBreakdownRows(
   }
 
   appendScopeCondition(conditions, values, scope);
+  appendDateConditions(conditions, values, startDate, endDate);
+  values.push(Number.isInteger(Number(horizon)) ? Number(horizon) : null);
+  const horizonParameter = `$${values.length}`;
 
   const result = await db.query(
     `
+      WITH ranked AS (
       SELECT
         fr.run_id,
         fr.horizon_months,
@@ -389,17 +411,37 @@ async function findLatestSegmentBreakdownRows(
         fd.validation_mape,
         fd.data_quality,
         fd.bias_correction,
-        fd.generated_at
+        fd.generated_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY fd.level, fd.group_id, fd.segment, fd.model_id, fd.variant_id
+          ORDER BY fd.forecast_month
+        ) AS horizon_month
       FROM forecast_data fd
       JOIN forecast_runs fr ON fr.run_id = fd.run_id
       WHERE ${conditions.join(" AND ")}
         AND fr.status = 'completed'
-      ORDER BY fd.level, fd.group_id, fd.segment, fd.forecast_month
+      )
+      SELECT *
+      FROM ranked
+      WHERE (${horizonParameter}::INTEGER IS NULL OR horizon_month <= ${horizonParameter}::INTEGER)
+      ORDER BY level, group_id, segment, forecast_month
     `,
     values
   );
 
   return result.rows;
+}
+
+function appendDateConditions(conditions, values, startDate, endDate) {
+  if (startDate) {
+    values.push(startDate);
+    conditions.push(`fd.forecast_month >= $${values.length}::DATE`);
+  }
+
+  if (endDate) {
+    values.push(endDate);
+    conditions.push(`fd.forecast_month <= $${values.length}::DATE`);
+  }
 }
 
 function appendScopeCondition(conditions, values, scope) {
