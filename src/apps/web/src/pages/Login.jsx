@@ -26,14 +26,24 @@ export default function LoginPage() {
     <main className="auth-shell">
       <section className="login-card">
         <div className="login-copy">
-          <p className="eyebrow">Sales Forecast</p>
-          <h1>Sign in to the secured sales planning workspace.</h1>
+          <img
+            className="login-logo"
+            src="/resources/images/prism-sales-forecasting-logo.png"
+            alt="PRISM Sales Forecasting"
+          />
+          <p className="eyebrow">Secure Planning Workspace</p>
+          <h1>Sign in</h1>
           <p>
-            Sales Forecast Sign-in.
+            Access the sales planning workspace to review forecasts, diagnostics, events, and administration tools.
           </p>
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>
+          <div className="login-form-heading">
+            <p className="eyebrow">Account Access</p>
+            <h2>Enter credentials</h2>
+          </div>
+
           <label>
             Username
             <input value={username} onChange={(event) => setUsername(event.target.value)} />

@@ -33,6 +33,22 @@ const defaultDashboardCardVisibility = Object.freeze({
   forecastData: true
 });
 
+function resolveForecastSectionFromHash(hash) {
+  if (hash === "#forecast-diagnostics") {
+    return "diagnostics";
+  }
+
+  if (hash === "#forecast-leaderboard") {
+    return "leaderboard";
+  }
+
+  if (hash === "#forecast-tables") {
+    return "tables";
+  }
+
+  return "overview";
+}
+
 function buildDashboardCardVisibility(cards) {
   return cards.reduce(
     (visibility, card) => ({
@@ -128,6 +144,20 @@ function getBandLabel(intervalMode) {
   }
 
   return "Point forecast only";
+}
+
+function InfoEyebrow({ children, info }) {
+  return (
+    <p className="eyebrow info-eyebrow">
+      <span>{children}</span>
+      <span className="info-tooltip" tabIndex="0" aria-label={info}>
+        i
+        <span className="info-tooltip-content" role="tooltip">
+          {info}
+        </span>
+      </span>
+    </p>
+  );
 }
 
 function summarizeSeries(series) {
@@ -647,7 +677,7 @@ function BiasChart({ data, wide = false }) {
   }
 
   const width = wide ? 1220 : 920;
-  const height = 280;
+  const height = 320;
   const padding = { top: 24, right: 24, bottom: 68, left: 64 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
@@ -706,8 +736,8 @@ function ActualPredictedScatter({ observations, wide = false }) {
   }
 
   const width = wide ? 1220 : 460;
-  const height = 320;
-  const padding = { top: 22, right: 22, bottom: 50, left: 58 };
+  const height = 280;
+  const padding = { top: 20, right: 20, bottom: 58, left: 82 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const maxValue = Math.max(...observations.flatMap((point) => [point.actualUnits, point.forecastUnits].map(Number)), 1);
@@ -715,7 +745,7 @@ function ActualPredictedScatter({ observations, wide = false }) {
   const yFor = (value) => padding.top + chartHeight - (Number(value || 0) / maxValue) * chartHeight;
 
   return (
-    <div className="chart-wrap compact-chart">
+    <div className="chart-wrap compact-chart error-histogram-chart">
       <svg viewBox={`0 0 ${width} ${height}`} role="img">
         <title>Actual versus predicted scatter</title>
         {[0, 0.5, 1].map((step) => {
@@ -724,7 +754,7 @@ function ActualPredictedScatter({ observations, wide = false }) {
             <g key={step}>
               <line x1={padding.left} x2={width - padding.right} y1={yFor(value)} y2={yFor(value)} />
               <line x1={xFor(value)} x2={xFor(value)} y1={padding.top} y2={height - padding.bottom} />
-              <text x={padding.left - 10} y={yFor(value) + 5} textAnchor="end">
+              <text x={padding.left - 12} y={yFor(value) + 5} textAnchor="end">
                 {formatUnits(value)}
               </text>
               <text x={xFor(value)} y={height - padding.bottom + 22} textAnchor="middle">
@@ -746,8 +776,8 @@ function ActualPredictedScatter({ observations, wide = false }) {
             <title>{`${point.groupLabel}, ${formatChartMonth(point.month)}: actual ${formatUnits(point.actualUnits)}, forecast ${formatUnits(point.forecastUnits)}, error ${formatUnits(point.error)}`}</title>
           </circle>
         ))}
-        <text x={padding.left + chartWidth / 2} y={height - 10} textAnchor="middle">Actual</text>
-        <text x="18" y={padding.top + chartHeight / 2} textAnchor="middle" transform={`rotate(-90 18 ${padding.top + chartHeight / 2})`}>Forecast</text>
+        <text x={padding.left + chartWidth / 2} y={height - 8} textAnchor="middle">Actual</text>
+        <text x="22" y={padding.top + chartHeight / 2} textAnchor="middle" transform={`rotate(-90 22 ${padding.top + chartHeight / 2})`}>Forecast</text>
       </svg>
     </div>
   );
@@ -759,8 +789,8 @@ function ErrorHistogram({ buckets, wide = false }) {
   }
 
   const width = wide ? 1220 : 460;
-  const height = 360;
-  const padding = { top: 22, right: 18, bottom: 112, left: 52 };
+  const height = 330;
+  const padding = { top: 20, right: 18, bottom: 118, left: 52 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const maxCount = Math.max(...buckets.map((bucket) => bucket.count), 1);
@@ -847,6 +877,7 @@ export default function ForecastPage() {
   const [hoveredGroupId, setHoveredGroupId] = useState("");
   const [hoveredBreakdownId, setHoveredBreakdownId] = useState("");
   const [intervalMode, setIntervalMode] = useState("point");
+  const [activeSection, setActiveSection] = useState(() => resolveForecastSectionFromHash(window.location.hash));
   const [referenceState, setReferenceState] = useState({
     loading: true,
     error: "",
@@ -895,6 +926,15 @@ export default function ForecastPage() {
       setLevel("dealer");
     }
   }, [availableLevels, forecastMode, level]);
+
+  useEffect(() => {
+    function handleHashChange() {
+      setActiveSection(resolveForecastSectionFromHash(window.location.hash));
+    }
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1349,22 +1389,65 @@ export default function ForecastPage() {
   const showAccuracyDiagnostics = cards.accuracyTrend || cards.biasTrend;
   const showErrorDiagnostics = cards.actualPredicted || cards.errorDistribution;
   const showIntervalControls = cards.forecastGraph || cards.regionalSegmentSplit || cards.segmentBreakdown;
+  const activeLevelLabel = availableLevels.find((item) => item.value === level)?.label || "Group";
+  const activeSectionLabel = {
+    overview: "Forecast Monitor",
+    diagnostics: "Diagnostics",
+    leaderboard: "Leaderboard",
+    tables: "Forecast Data"
+  }[activeSection];
 
   return (
-    <>
-      <section className="dashboard-header">
-        <div>
-          <p className="eyebrow">Forecast dashboard</p>
-          <h1>Track zone and state forecasts with a live segment split for each region.</h1>
-        </div>
-        <img
-          src="/resources/images/forecast-analytics-dashboard.jpg"
-          alt="Forecast analytics dashboard"
-        />
-      </section>
+    <section className="forecast-ops-shell">
+      <div className="forecast-ops-main">
+        <section className="forecast-ops-header">
+          <div>
+            <p className="eyebrow">Operations Dashboard</p>
+            <h1>{activeSectionLabel}</h1>
+            <p>
+              {selectedRegionLabel || "All regions"} · {segment || "All segments"} · {selectedModel?.name || "All models"}
+            </p>
+          </div>
+          <div className="forecast-ops-status">
+            {showIntervalControls && (
+              <div className="interval-toggle-group header-interval-toggle" aria-label="Prediction interval display options">
+                <label>
+                  <input
+                    type="radio"
+                    name="forecast-interval-mode"
+                    value="point"
+                    checked={intervalMode === "point"}
+                    onChange={() => setIntervalMode("point")}
+                  />
+                  Point only
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="forecast-interval-mode"
+                    value="80"
+                    checked={intervalMode === "80"}
+                    onChange={() => setIntervalMode("80")}
+                  />
+                  80% band
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="forecast-interval-mode"
+                    value="95"
+                    checked={intervalMode === "95"}
+                    onChange={() => setIntervalMode("95")}
+                  />
+                  95% band
+                </label>
+              </div>
+            )}
+          </div>
+        </section>
 
-      <section className="controls-band">
-        <div className="controls-row">
+        <section className="controls-band forecast-ops-toolbar">
+          <div className="controls-row">
           <label>
             Forecast level
             <select value={level} onChange={(event) => setLevel(event.target.value)}>
@@ -1451,9 +1534,7 @@ export default function ForecastPage() {
               ))}
             </select>
           </label>
-        </div>
 
-        <div className="controls-row controls-row-products">
           <label>
             Segment
             <select
@@ -1501,56 +1582,16 @@ export default function ForecastPage() {
               ))}
             </select>
           </label>
-        </div>
-      </section>
+          </div>
+        </section>
 
       {referenceState.error && (
         <p className="page-notice">Reference data could not be loaded from the database: {referenceState.error}</p>
       )}
       {dashboardCardState.error && <p className="page-notice">{dashboardCardState.error}</p>}
 
-      {showIntervalControls && (
-        <section className="forecast-display-controls" aria-label="Prediction interval display options">
-          <div>
-            <p className="eyebrow">Intervals</p>
-            <strong>{getBandLabel(intervalMode)}</strong>
-          </div>
-          <div className="interval-toggle-group">
-            <label>
-              <input
-                type="radio"
-                name="forecast-interval-mode"
-                value="point"
-                checked={intervalMode === "point"}
-                onChange={() => setIntervalMode("point")}
-              />
-              Point only
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="forecast-interval-mode"
-                value="80"
-                checked={intervalMode === "80"}
-                onChange={() => setIntervalMode("80")}
-              />
-              80% band
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="forecast-interval-mode"
-                value="95"
-                checked={intervalMode === "95"}
-                onChange={() => setIntervalMode("95")}
-              />
-              95% band
-            </label>
-          </div>
-        </section>
-      )}
-
-      <section className="summary-grid forecast-summary-grid" aria-label="Forecast summary">
+      {activeSection === "overview" && (
+      <section className="summary-grid forecast-summary-grid forecast-ops-summary" aria-label="Forecast summary">
         <article className="metric">
           <span>{horizonMonths}-month forecast</span>
           <strong>{hasForecastData ? formatUnits(summary.total) : "No data"}</strong>
@@ -1585,15 +1626,26 @@ export default function ForecastPage() {
               : "Intervals will appear with forecast data"}
           </p>
         </article>
+        <article className="metric">
+          <span>Open exceptions</span>
+          <strong>{diagnosticsState.leaderboard.filter((row) => Number(row.mape || 0) > 12).length}</strong>
+          <p>MAPE above 12% in the current view</p>
+        </article>
+        <article className="metric">
+          <span>Visible series</span>
+          <strong>{hasForecastData ? visibleSeries.length : 0}</strong>
+          <p>{activeLevelLabel.toLowerCase()} rows matching filters</p>
+        </article>
       </section>
+      )}
 
-      {showForecastAnalytics && (
+      {activeSection === "overview" && showForecastAnalytics && (
       <section className="analytics-grid" aria-label="Forecast analytics">
         {cards.trend && (
         <article className={`analytics-panel ${!cards.segmentSplit ? "full-width-panel" : ""}`}>
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Trend</p>
+              <InfoEyebrow info="Compares recent actual sales against the forecast path for the selected filters. Use it to see whether forecast direction is tracking real demand.">Trend</InfoEyebrow>
               <h2>Actual vs Forecast trend</h2>
             </div>
           </div>
@@ -1618,7 +1670,7 @@ export default function ForecastPage() {
         <article className={`analytics-panel ${!cards.trend ? "full-width-panel" : ""}`}>
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Segment split</p>
+              <InfoEyebrow info="Shows how the selected forecast is distributed across vehicle segments. Use it to identify which segments are driving expected demand.">Segment split</InfoEyebrow>
               <h2>
                 Forecast by segment for {breakdownContextLabel}
               </h2>
@@ -1632,13 +1684,13 @@ export default function ForecastPage() {
       </section>
       )}
 
-      {showAccuracyDiagnostics && (
+      {activeSection === "diagnostics" && showAccuracyDiagnostics && (
       <section className="analytics-grid" aria-label="Forecast accuracy diagnostics">
         {cards.accuracyTrend && (
         <article className={`analytics-panel ${!cards.biasTrend ? "full-width-panel" : ""}`}>
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Accuracy</p>
+              <InfoEyebrow info="Tracks forecast accuracy measures over time. Lower MAPE, MAE, and RMSE indicate better historical forecast performance.">Accuracy</InfoEyebrow>
               <h2>MAPE / MAE / RMSE trend</h2>
               <p className="panel-subcopy">Rolling matched actuals for {breakdownContextLabel}</p>
             </div>
@@ -1652,7 +1704,7 @@ export default function ForecastPage() {
         <article className={`analytics-panel ${!cards.accuracyTrend ? "full-width-panel" : ""}`}>
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Bias</p>
+              <InfoEyebrow info="Shows whether forecasts have historically been above or below actuals. Positive values indicate over-forecasting; negative values indicate under-forecasting.">Bias</InfoEyebrow>
               <h2>Forecast bias by month</h2>
               <p className="panel-subcopy">Positive bars are over-forecast, negative bars are under-forecast.</p>
             </div>
@@ -1663,13 +1715,13 @@ export default function ForecastPage() {
       </section>
       )}
 
-      {showErrorDiagnostics && (
+      {activeSection === "diagnostics" && showErrorDiagnostics && (
       <section className="analytics-grid" aria-label="Forecast error diagnostics">
         {cards.actualPredicted && (
         <article className={`analytics-panel ${!cards.errorDistribution ? "full-width-panel" : ""}`}>
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Calibration</p>
+              <InfoEyebrow info="Plots actual units against predicted units. Points closer to the diagonal line indicate better calibration.">Calibration</InfoEyebrow>
               <h2>Actual vs predicted</h2>
             </div>
           </div>
@@ -1681,7 +1733,7 @@ export default function ForecastPage() {
         <article className={`analytics-panel ${!cards.actualPredicted ? "full-width-panel" : ""}`}>
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Error spread</p>
+              <InfoEyebrow info="Shows the distribution of forecast errors. A tighter distribution around zero means forecast misses are smaller and more consistent.">Error spread</InfoEyebrow>
               <h2>Error distribution</h2>
             </div>
           </div>
@@ -1691,32 +1743,29 @@ export default function ForecastPage() {
       </section>
       )}
 
-      {cards.leaderboard && (
+      {activeSection === "leaderboard" && cards.leaderboard && (
       <section className="forecast-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Leaderboard</p>
+            <InfoEyebrow info="Ranks forecast groups by accuracy using matched actuals. Lower MAPE means better historical forecast quality.">Leaderboard</InfoEyebrow>
             <h2>Accuracy leaderboard by {availableLevels.find((item) => item.value === level)?.label.toLowerCase()}</h2>
             <p className="panel-subcopy">Ranked by lowest MAPE across matched actuals.</p>
           </div>
-          <span className={diagnosticsState.loading ? "source-pill" : "source-pill live"}>
-            {diagnosticsState.loading ? "Loading" : "Diagnostics API"}
-          </span>
         </div>
         <AccuracyLeaderboard rows={diagnosticsState.leaderboard} />
       </section>
       )}
 
+      {activeSection === "overview" && (cards.forecastGraph || cards.regionalSegmentSplit) && (
+      <section className="forecast-chart-pair" aria-label="Forecast graph and regional segment split">
       {cards.forecastGraph && (
-      <section className="forecast-panel">
+      <article className="forecast-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Forecast graph</p>
+            <InfoEyebrow info="Shows the monthly forecast for the selected level and filters. Use the interval selector in the page header to switch between point forecast and uncertainty bands.">Forecast graph</InfoEyebrow>
             <h2>Monthly units by {availableLevels.find((item) => item.value === level)?.label.toLowerCase()}</h2>
           </div>
-          <span className={hasForecastData ? "source-pill live" : "source-pill"}>
-            {forecastState.loading ? "Loading" : hasForecastData ? forecastMode === "blended" ? "Blended API" : "Live API" : "No data"}
-          </span>
+          <span className="source-pill interval-context">{getBandLabel(intervalMode)}</span>
         </div>
 
         {forecastState.error && <p className="notice">{forecastState.error}</p>}
@@ -1735,21 +1784,6 @@ export default function ForecastPage() {
           message={chartMessage}
         />
 
-        <div className="chart-legend interval-legend">
-          <span>
-            <i className="legend-line forecast-line" />
-            Point forecast
-          </span>
-          <span className={intervalMode === "80" ? "" : "muted"}>
-            <i className="interval-swatch interval-80" />
-            80% interval
-          </span>
-          <span className={intervalMode === "95" ? "" : "muted"}>
-            <i className="interval-swatch interval-95" />
-            95% interval
-          </span>
-        </div>
-
         {hasForecastData && (
           <div className="legend">
             {visibleSeries.map((item, index) => (
@@ -1765,22 +1799,19 @@ export default function ForecastPage() {
             ))}
           </div>
         )}
-      </section>
+      </article>
       )}
 
       {cards.regionalSegmentSplit && (
-      <section className="forecast-panel">
+      <article className="forecast-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Regional segment split</p>
+            <InfoEyebrow info="Shows segment-level forecast lines within the selected region or scope. Use it to compare expected demand movement by segment.">Regional segment split</InfoEyebrow>
             <h2>Segments within {breakdownContextLabel}</h2>
             <p className="panel-subcopy">{productContextLabel}</p>
           </div>
           <div className="panel-pill-group">
             <span className="source-pill interval-context">{getBandLabel(intervalMode)}</span>
-            <span className={hasBreakdownData ? "source-pill live" : "source-pill"}>
-              {breakdownState.loading ? "Loading" : hasBreakdownData ? "Cached API" : "No data"}
-            </span>
           </div>
         </div>
 
@@ -1809,14 +1840,16 @@ export default function ForecastPage() {
             ))}
           </div>
         )}
+      </article>
+      )}
       </section>
       )}
 
-      {cards.segmentBreakdown && hasBreakdownData && (
+      {activeSection === "tables" && cards.segmentBreakdown && hasBreakdownData && (
         <section className="data-table" aria-label="Segment breakdown data table">
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Segment breakdown</p>
+              <InfoEyebrow info="Monthly forecast values by segment, including interval ranges when an uncertainty band is selected.">Segment breakdown</InfoEyebrow>
               <h2>Next {horizonMonths} months for {breakdownContextLabel}</h2>
             </div>
             <span className="source-pill interval-context">{getBandLabel(intervalMode)}</span>
@@ -1855,11 +1888,11 @@ export default function ForecastPage() {
         </section>
       )}
 
-      {cards.forecastData && hasForecastData && (
+      {activeSection === "tables" && cards.forecastData && hasForecastData && (
         <section className="data-table" aria-label="Forecast data table">
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Forecast data</p>
+              <InfoEyebrow info="Monthly forecast values for each visible group matching the selected filters.">Forecast data</InfoEyebrow>
               <h2>Next {horizonMonths} months</h2>
             </div>
           </div>
@@ -1887,6 +1920,7 @@ export default function ForecastPage() {
           </div>
         </section>
       )}
-    </>
+      </div>
+    </section>
   );
 }

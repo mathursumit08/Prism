@@ -353,12 +353,13 @@ export default function ForecastEventsPage() {
               <thead>
                 <tr>
                   <th>Event</th>
+                  <th className="event-code-column">Event code</th>
                   <th>Type</th>
                   <th>Scope</th>
-                  <th>Date range</th>
+                  <th className="event-center-column">Date range</th>
                   <th>Uplift</th>
                   <th>Status</th>
-                  <th>Actions</th>
+                  <th className="event-center-column">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -367,19 +368,19 @@ export default function ForecastEventsPage() {
                     <tr key={event.eventId}>
                       <th>
                         <strong>{event.eventName}</strong>
-                        <small>{event.eventCode}</small>
                       </th>
+                      <td className="event-code-column">{event.eventCode}</td>
                       <td>{event.eventType}</td>
                       <td>
                         {event.scope}
                         {event.scopeValue ? `: ${event.scopeValue}` : ""}
                       </td>
-                      <td>
+                      <td className="event-center-column">
                         {event.startDate} to {event.endDate}
                       </td>
                       <td>{formatPercent(event.upliftPct)}</td>
                       <td>{event.isActive ? "Active" : "Inactive"}</td>
-                      <td>
+                      <td className="event-center-column">
                         <div className="table-actions">
                           <button type="button" className="secondary-button" onClick={() => editEvent(event)}>
                             Edit
@@ -393,7 +394,7 @@ export default function ForecastEventsPage() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="7">No forecast events are configured.</td>
+                    <td colSpan="8">No forecast events are configured.</td>
                   </tr>
                 )}
               </tbody>
