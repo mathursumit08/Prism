@@ -50,6 +50,10 @@ function getMonthRange(month) {
   };
 }
 
+function matchesScopeValue(eventScopeValue, dealerScopeValue) {
+  return String(eventScopeValue || "").trim().toLowerCase() === String(dealerScopeValue || "").trim().toLowerCase();
+}
+
 /**
  * Returns the active event rules that apply to the provided forecast point and dealer scope.
  */
@@ -62,16 +66,18 @@ function findMatchingEvents(point, dealer, eventCalendar) {
       return false;
     }
 
-    if (event.scope === "national") {
+    const scope = String(event.scope || "").toLowerCase();
+
+    if (scope === "national") {
       return true;
     }
 
-    if (event.scope === "zone") {
-      return event.scope_value === dealer.zone;
+    if (scope === "zone") {
+      return matchesScopeValue(event.scope_value, dealer.zone);
     }
 
-    if (event.scope === "state") {
-      return event.scope_value === dealer.state;
+    if (scope === "state") {
+      return matchesScopeValue(event.scope_value, dealer.state);
     }
 
     return false;

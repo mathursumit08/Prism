@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext.jsx";
+import DismissibleMessage from "../components/DismissibleMessage.jsx";
 
 const forecastLevels = [
   { value: "zone", label: "Zone" },
@@ -736,8 +737,8 @@ function ActualPredictedScatter({ observations, wide = false }) {
   }
 
   const width = wide ? 1220 : 460;
-  const height = 280;
-  const padding = { top: 20, right: 20, bottom: 58, left: 82 };
+  const height = 240;
+  const padding = { top: 18, right: 18, bottom: 54, left: 72 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const maxValue = Math.max(...observations.flatMap((point) => [point.actualUnits, point.forecastUnits].map(Number)), 1);
@@ -745,7 +746,7 @@ function ActualPredictedScatter({ observations, wide = false }) {
   const yFor = (value) => padding.top + chartHeight - (Number(value || 0) / maxValue) * chartHeight;
 
   return (
-    <div className="chart-wrap compact-chart error-histogram-chart">
+    <div className="chart-wrap compact-chart">
       <svg viewBox={`0 0 ${width} ${height}`} role="img">
         <title>Actual versus predicted scatter</title>
         {[0, 0.5, 1].map((step) => {
@@ -789,15 +790,15 @@ function ErrorHistogram({ buckets, wide = false }) {
   }
 
   const width = wide ? 1220 : 460;
-  const height = 330;
-  const padding = { top: 20, right: 18, bottom: 118, left: 52 };
+  const height = 270;
+  const padding = { top: 18, right: 18, bottom: 106, left: 52 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const maxCount = Math.max(...buckets.map((bucket) => bucket.count), 1);
   const barWidth = (chartWidth / buckets.length) * 0.72;
 
   return (
-    <div className="chart-wrap compact-chart">
+    <div className="chart-wrap compact-chart error-histogram-chart">
       <svg viewBox={`0 0 ${width} ${height}`} role="img">
         <title>Error distribution histogram</title>
         {[0, 0.5, 1].map((step) => {
@@ -814,7 +815,7 @@ function ErrorHistogram({ buckets, wide = false }) {
         {buckets.map((bucket, index) => {
           const x = padding.left + (index / buckets.length) * chartWidth + chartWidth / buckets.length / 2 - barWidth / 2;
           const barHeight = (bucket.count / maxCount) * chartHeight;
-          const label = `${formatDecimal(bucket.minErrorPct, 0)} to ${formatDecimal(bucket.maxErrorPct, 0)}%`;
+          const label = `${formatDecimal(bucket.minErrorPct, 0)}-${formatDecimal(bucket.maxErrorPct, 0)}%`;
           return (
             <g key={`${bucket.minErrorPct}-${bucket.maxErrorPct}`}>
               <rect x={x} y={padding.top + chartHeight - barHeight} width={barWidth} height={Math.max(barHeight, 1)} fill="#6a4c93" opacity="0.78">
@@ -822,9 +823,9 @@ function ErrorHistogram({ buckets, wide = false }) {
               </rect>
               <text
                 x={x + barWidth / 2}
-                y={padding.top + chartHeight + 20}
+                y={padding.top + chartHeight + 16}
                 textAnchor="end"
-                transform={`rotate(-90 ${x + barWidth / 2} ${padding.top + chartHeight + 20})`}
+                transform={`rotate(-90 ${x + barWidth / 2} ${padding.top + chartHeight + 16})`}
               >
                 {label}
               </text>
@@ -878,6 +879,7 @@ export default function ForecastPage() {
   const [hoveredBreakdownId, setHoveredBreakdownId] = useState("");
   const [intervalMode, setIntervalMode] = useState("point");
   const [activeSection, setActiveSection] = useState(() => resolveForecastSectionFromHash(window.location.hash));
+  const [dismissedMessages, setDismissedMessages] = useState({});
   const [referenceState, setReferenceState] = useState({
     loading: true,
     error: "",
@@ -1397,6 +1399,13 @@ export default function ForecastPage() {
     tables: "Forecast Data"
   }[activeSection];
 
+  function dismissMessage(key) {
+    setDismissedMessages((current) => ({
+      ...current,
+      [key]: true
+    }));
+  }
+
   return (
     <section className="forecast-ops-shell">
       <div className="forecast-ops-main">
@@ -1585,10 +1594,16 @@ export default function ForecastPage() {
           </div>
         </section>
 
-      {referenceState.error && (
-        <p className="page-notice">Reference data could not be loaded from the database: {referenceState.error}</p>
+      {referenceState.error && !dismissedMessages.referenceError && (
+        <DismissibleMessage onClose={() => dismissMessage("referenceError")}>
+          Reference data could not be loaded from the database: {referenceState.error}
+        </DismissibleMessage>
       )}
-      {dashboardCardState.error && <p className="page-notice">{dashboardCardState.error}</p>}
+      {dashboardCardState.error && !dismissedMessages.dashboardCardError && (
+        <DismissibleMessage onClose={() => dismissMessage("dashboardCardError")}>
+          {dashboardCardState.error}
+        </DismissibleMessage>
+      )}
 
       {activeSection === "overview" && (
       <section className="summary-grid forecast-summary-grid forecast-ops-summary" aria-label="Forecast summary">

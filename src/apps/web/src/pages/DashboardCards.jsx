@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext.jsx";
+import DismissibleMessage from "../components/DismissibleMessage.jsx";
 
 function groupCards(cards) {
   return cards.reduce((groups, card) => {
@@ -132,8 +133,16 @@ export default function DashboardCardsPage() {
         </div>
       </section>
 
-      {state.error && <p className="page-notice">{state.error}</p>}
-      {state.message && <p className="page-success">{state.message}</p>}
+      {state.error && (
+        <DismissibleMessage onClose={() => setState((current) => ({ ...current, error: "" }))}>
+          {state.error}
+        </DismissibleMessage>
+      )}
+      {state.message && (
+        <DismissibleMessage kind="success" onClose={() => setState((current) => ({ ...current, message: "" }))}>
+          {state.message}
+        </DismissibleMessage>
+      )}
 
       <section className="forecast-panel dashboard-card-manager">
         <div className="panel-heading">
