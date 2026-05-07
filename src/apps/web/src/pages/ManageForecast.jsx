@@ -93,8 +93,8 @@ function CalibrationCoverageChart({ runs }) {
   }
 
   const width = 920;
-  const height = 320;
-  const padding = { top: 24, right: 28, bottom: 78, left: 64 };
+  const height = 370;
+  const padding = { top: 24, right: 28, bottom: 128, left: 64 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const xAxisLabelY = padding.top + chartHeight + 14;
@@ -621,9 +621,6 @@ export default function ManageForecastPage() {
               <p className="eyebrow">Calibration history</p>
               <h2>Coverage against interval targets</h2>
             </div>
-            <span className={calibrationHistoryState.loading ? "source-pill" : "source-pill live"}>
-              {calibrationHistoryState.loading ? "Loading" : "History API"}
-            </span>
           </div>
           {calibrationHistoryState.error && <p className="notice compact-notice">{calibrationHistoryState.error}</p>}
           <CalibrationCoverageChart runs={calibrationHistoryState.runs} />
