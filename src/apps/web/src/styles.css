@@ -930,7 +930,7 @@ select:disabled {
 .forecast-ops-main .page-notice,
 .forecast-ops-main .page-success {
   max-width: none;
-  margin: 12px 0 0;
+  margin: 12px 0;
 }
 
 .forecast-ops-main .forecast-display-controls {
@@ -1022,7 +1022,7 @@ select:disabled {
 }
 
 .error-histogram-chart {
-  padding-bottom: 8px;
+  padding-bottom: 4px;
 }
 
 .error-histogram-chart svg {
@@ -1475,11 +1475,48 @@ select:disabled {
 
 .page-success {
   max-width: 1220px;
-  margin: 20px auto 0;
+  margin: 20px auto 12px;
   padding: 12px 14px;
   border-left: 5px solid #00796b;
   color: #184640;
   background: #ebfaf7;
+}
+
+.dismissible-message {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.dismissible-message > span {
+  min-width: 0;
+}
+
+.message-close-button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  place-items: center;
+  padding: 0;
+  color: currentColor;
+  background: transparent;
+}
+
+.message-close-button svg {
+  display: block;
+  width: 16px;
+  min-width: 0;
+  height: 16px;
+  max-width: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: square;
+  stroke-width: 2;
 }
 
 .admin-header-copy {

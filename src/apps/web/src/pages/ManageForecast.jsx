@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext.jsx";
+import DismissibleMessage from "../components/DismissibleMessage.jsx";
 const forecastHorizons = [6, 12, 24];
 
 function formatUnits(value) {
@@ -22,6 +23,19 @@ function formatDateTime(value) {
   return new Intl.DateTimeFormat("en-IN", {
     dateStyle: "medium",
     timeStyle: "short"
+  }).format(new Date(value));
+}
+
+function formatChartDateTime(value) {
+  if (!value) {
+    return "N/A";
+  }
+
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
   }).format(new Date(value));
 }
 
@@ -93,8 +107,8 @@ function CalibrationCoverageChart({ runs }) {
   }
 
   const width = 920;
-  const height = 370;
-  const padding = { top: 24, right: 28, bottom: 128, left: 64 };
+  const height = 390;
+  const padding = { top: 24, right: 28, bottom: 150, left: 64 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const xAxisLabelY = padding.top + chartHeight + 14;
@@ -133,7 +147,7 @@ function CalibrationCoverageChart({ runs }) {
               textAnchor="end"
               transform={`rotate(-90 ${xFor(index)} ${xAxisLabelY})`}
             >
-              {formatDateTime(run.completedAt)}
+              {formatChartDateTime(run.completedAt)}
             </text>
           ))}
           <path d={buildPath("coverage80")} stroke="#00796b" strokeWidth="3" />
@@ -421,9 +435,21 @@ export default function ManageForecastPage() {
         </div>
       </section>
 
-      {adminState.error && <p className="page-notice">{adminState.error}</p>}
-      {actionState.error && <p className="page-notice">{actionState.error}</p>}
-      {actionState.message && <p className="page-success">{actionState.message}</p>}
+      {adminState.error && (
+        <DismissibleMessage onClose={() => setAdminState((current) => ({ ...current, error: "" }))}>
+          {adminState.error}
+        </DismissibleMessage>
+      )}
+      {actionState.error && (
+        <DismissibleMessage onClose={() => setActionState((current) => ({ ...current, error: "" }))}>
+          {actionState.error}
+        </DismissibleMessage>
+      )}
+      {actionState.message && (
+        <DismissibleMessage kind="success" onClose={() => setActionState((current) => ({ ...current, message: "" }))}>
+          {actionState.message}
+        </DismissibleMessage>
+      )}
 
       <section className="admin-actions-panel">
         <div className="panel-heading compact">

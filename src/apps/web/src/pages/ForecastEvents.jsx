@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext.jsx";
+import DismissibleMessage from "../components/DismissibleMessage.jsx";
 
-const eventTypes = ["festive", "regulatory", "promotional", "holiday", "other"];
-const scopes = ["national", "zone", "state"];
+const eventTypes = ["Festive", "Regulatory", "Promotional", "Holiday", "Other"];
+const scopes = ["National", "Zone", "State"];
 const emptyForm = {
   eventCode: "",
   eventName: "",
-  eventType: "festive",
-  scope: "national",
+  eventType: "Festive",
+  scope: "National",
   scopeValue: "",
   startDate: "",
   endDate: "",
@@ -20,12 +21,17 @@ function formatPercent(value) {
   return `${numericValue > 0 ? "+" : ""}${numericValue.toFixed(1)}%`;
 }
 
+function normalizeOption(value, options, fallback) {
+  const text = String(value || "").trim();
+  return options.find((option) => option.toLowerCase() === text.toLowerCase()) || fallback;
+}
+
 function toFormEvent(event) {
   return {
     eventCode: event.eventCode || "",
     eventName: event.eventName || "",
-    eventType: event.eventType || "festive",
-    scope: event.scope || "national",
+    eventType: normalizeOption(event.eventType, eventTypes, "Festive"),
+    scope: normalizeOption(event.scope, scopes, "National"),
     scopeValue: event.scopeValue || "",
     startDate: event.startDate || "",
     endDate: event.endDate || "",
@@ -40,7 +46,7 @@ function toApiEvent(form) {
     event_name: form.eventName,
     event_type: form.eventType,
     scope: form.scope,
-    scope_value: form.scope === "national" ? null : form.scopeValue,
+    scope_value: form.scope === "National" ? null : form.scopeValue,
     start_date: form.startDate,
     end_date: form.endDate,
     uplift_pct: Number(form.upliftPct),
@@ -103,7 +109,7 @@ export default function ForecastEventsPage() {
     setForm((current) => ({
       ...current,
       [field]: value,
-      ...(field === "scope" && value === "national" ? { scopeValue: "" } : {})
+      ...(field === "scope" && value === "National" ? { scopeValue: "" } : {})
     }));
   }
 
@@ -212,7 +218,7 @@ export default function ForecastEventsPage() {
           <p className="eyebrow">Forecast Events</p>
           <h1>Maintain demand-impacting events.</h1>
           <p className="admin-header-copy">
-            Configure dated festive, regulatory, promotional, holiday, and other uplift rules by national, zone, or state scope.
+            Configure dated Festive, Regulatory, Promotional, Holiday, and Other uplift rules by National, Zone, or State scope.
           </p>
         </div>
         <div className="admin-hero-card">
@@ -222,9 +228,21 @@ export default function ForecastEventsPage() {
         </div>
       </section>
 
-      {eventsState.error && <p className="page-notice">{eventsState.error}</p>}
-      {actionState.error && <p className="page-notice">{actionState.error}</p>}
-      {actionState.message && <p className="page-success">{actionState.message}</p>}
+      {eventsState.error && (
+        <DismissibleMessage onClose={() => setEventsState((current) => ({ ...current, error: "" }))}>
+          {eventsState.error}
+        </DismissibleMessage>
+      )}
+      {actionState.error && (
+        <DismissibleMessage onClose={() => setActionState((current) => ({ ...current, error: "" }))}>
+          {actionState.error}
+        </DismissibleMessage>
+      )}
+      {actionState.message && (
+        <DismissibleMessage kind="success" onClose={() => setActionState((current) => ({ ...current, message: "" }))}>
+          {actionState.message}
+        </DismissibleMessage>
+      )}
 
       <section className="forecast-event-layout">
         <form className="forecast-event-form" onSubmit={handleSubmit}>
@@ -279,9 +297,9 @@ export default function ForecastEventsPage() {
               <input
                 value={form.scopeValue}
                 onChange={(event) => updateField("scopeValue", event.target.value)}
-                placeholder={form.scope === "zone" ? "North" : form.scope === "state" ? "Maharashtra" : "Not required"}
-                disabled={form.scope === "national"}
-                required={form.scope !== "national"}
+                placeholder={form.scope === "Zone" ? "North" : form.scope === "State" ? "Maharashtra" : "Not required"}
+                disabled={form.scope === "National"}
+                required={form.scope !== "National"}
               />
             </label>
             <label>
@@ -370,9 +388,9 @@ export default function ForecastEventsPage() {
                         <strong>{event.eventName}</strong>
                       </th>
                       <td className="event-code-column">{event.eventCode}</td>
-                      <td>{event.eventType}</td>
+                      <td>{normalizeOption(event.eventType, eventTypes, event.eventType)}</td>
                       <td>
-                        {event.scope}
+                        {normalizeOption(event.scope, scopes, event.scope)}
                         {event.scopeValue ? `: ${event.scopeValue}` : ""}
                       </td>
                       <td className="event-center-column">

@@ -1,7 +1,7 @@
 import { pool } from "../../db.js";
 
-export const eventTypes = ["festive", "regulatory", "promotional", "holiday", "other"];
-export const eventScopes = ["national", "zone", "state"];
+export const eventTypes = ["Festive", "Regulatory", "Promotional", "Holiday", "Other"];
+export const eventScopes = ["National", "Zone", "State"];
 
 function buildValidationError(message) {
   const error = new Error(message);
@@ -43,6 +43,17 @@ function normalizeText(value, fieldName, { required = true, maxLength = 120 } = 
   return normalized;
 }
 
+function normalizeOption(value, fieldName, options, { maxLength }) {
+  const normalized = normalizeText(value, fieldName, { maxLength });
+  const matchingOption = options.find((option) => option.toLowerCase() === normalized.toLowerCase());
+
+  if (!matchingOption) {
+    throw buildValidationError(`${fieldName} must be one of: ${options.join(", ")}.`);
+  }
+
+  return matchingOption;
+}
+
 function normalizeEventPayload(payload, { partial = false } = {}) {
   const normalized = {};
   const hasField = (field) => Object.prototype.hasOwnProperty.call(payload, field);
@@ -66,29 +77,17 @@ function normalizeEventPayload(payload, { partial = false } = {}) {
   }
 
   if (!partial || hasField("event_type")) {
-    const eventType = normalizeText(payload.event_type ?? "festive", "event_type", {
-      maxLength: 20
-    });
-    if (!eventTypes.includes(eventType)) {
-      throw buildValidationError(`event_type must be one of: ${eventTypes.join(", ")}.`);
-    }
-    normalized.event_type = eventType;
+    normalized.event_type = normalizeOption(payload.event_type ?? "Festive", "event_type", eventTypes, { maxLength: 20 });
   }
 
   if (!partial || hasField("scope")) {
-    const scope = normalizeText(payload.scope ?? "national", "scope", {
-      maxLength: 10
-    });
-    if (!eventScopes.includes(scope)) {
-      throw buildValidationError(`scope must be one of: ${eventScopes.join(", ")}.`);
-    }
-    normalized.scope = scope;
+    normalized.scope = normalizeOption(payload.scope ?? "National", "scope", eventScopes, { maxLength: 10 });
   }
 
   if (!partial || hasField("scope_value") || hasField("scope")) {
-    const scope = normalized.scope ?? payload.scope;
+    const scope = normalized.scope ?? normalizeOption(payload.scope, "scope", eventScopes, { maxLength: 10 });
     normalized.scope_value =
-      scope === "national"
+      scope === "National"
         ? null
         : normalizeText(payload.scope_value, "scope_value", {
             maxLength: 120

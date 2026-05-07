@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../auth/AuthContext.jsx";
+import DismissibleMessage from "../components/DismissibleMessage.jsx";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -58,7 +59,11 @@ export default function LoginPage() {
             />
           </label>
 
-          {error && <p className="page-notice login-notice">{error}</p>}
+          {error && (
+            <DismissibleMessage onClose={() => setError("")}>
+              {error}
+            </DismissibleMessage>
+          )}
 
           <button type="submit" disabled={submitting || !username || !password}>
             {submitting ? "Signing in..." : "Sign in"}
