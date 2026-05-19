@@ -107,6 +107,8 @@ export default function DashboardCardsPage() {
         message: "Dashboard card visibility saved.",
         cards: payload.cards || []
       });
+      // Let the app shell refresh its side-menu without requiring a full reload.
+      window.dispatchEvent(new Event("dashboard-card-settings-changed"));
     } catch (error) {
       setState((current) => ({
         ...current,

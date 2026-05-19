@@ -33,6 +33,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const refreshSession = useCallback(async () => {
+    // Coalesce concurrent refresh attempts so a burst of 401 responses only
+    // sends one refresh request and all callers reuse the same result.
     if (refreshPromiseRef.current) {
       return refreshPromiseRef.current;
     }
@@ -119,6 +121,8 @@ export function AuthProvider({ children }) {
 
   const apiFetch = useCallback(
     async (path, options = {}, allowRetry = true) => {
+      // API calls use the short-lived access token, while the refresh token stays
+      // in an HTTP-only cookie and is used once for automatic retry on 401.
       const response = await fetch(`${apiUrl}${path}`, {
         ...options,
         credentials: "include",

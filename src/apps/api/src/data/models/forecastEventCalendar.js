@@ -44,6 +44,8 @@ function normalizeText(value, fieldName, { required = true, maxLength = 120 } = 
 }
 
 function normalizeOption(value, fieldName, options, { maxLength }) {
+  // Store canonical Title Case values while accepting older lowercase payloads
+  // from clients or already-seeded data.
   const normalized = normalizeText(value, fieldName, { maxLength });
   const matchingOption = options.find((option) => option.toLowerCase() === normalized.toLowerCase());
 
@@ -86,6 +88,8 @@ function normalizeEventPayload(payload, { partial = false } = {}) {
 
   if (!partial || hasField("scope_value") || hasField("scope")) {
     const scope = normalized.scope ?? normalizeOption(payload.scope, "scope", eventScopes, { maxLength: 10 });
+    // National events intentionally clear scope_value; Zone and State events must
+    // keep a value so the worker can match them to dealer metadata.
     normalized.scope_value =
       scope === "National"
         ? null

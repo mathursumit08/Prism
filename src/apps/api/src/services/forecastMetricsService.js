@@ -35,6 +35,8 @@ async function ensureMetricsAccess(user, level, groupId) {
 }
 
 function appendScopeCondition(conditions, values, scope) {
+  // Apply the same RBAC scope to metrics queries that the forecast data endpoints
+  // use, so aggregate KPIs cannot leak another region or dealer.
   if (!scope || scope.kind === "all") {
     return;
   }
@@ -127,6 +129,8 @@ export async function getForecastMetricsPayload(user, query, db = pool) {
 
   appendScopeCondition(conditions, values, getScope(user));
 
+  // Actuals are rolled up to dealer, state, and zone levels before joining the
+  // stored forecasts, which keeps the metric calculation consistent per level.
   const result = await db.query(
     `
       WITH latest_actual_month AS (

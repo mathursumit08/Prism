@@ -32,6 +32,8 @@ export function buildUserProfile(user) {
 }
 
 export function getScope(profile) {
+  // Scopes are data filters, not UI permissions. They are reused by query
+  // services to keep regional and dealer users inside their assigned territory.
   if (profile.role === "Regional Head") {
     return {
       kind: "region",
@@ -60,6 +62,8 @@ export function canAccessForecastLevel(profile, level) {
 }
 
 export async function isGroupAllowed(profile, level, groupId) {
+  // Group-level checks validate requested dropdown filters before the heavier
+  // forecast queries run.
   if (!groupId) {
     return true;
   }

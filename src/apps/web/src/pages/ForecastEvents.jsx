@@ -22,6 +22,8 @@ function formatPercent(value) {
 }
 
 function normalizeOption(value, options, fallback) {
+  // Existing rows may still contain older lowercase values until migrations run;
+  // normalize them for the form without changing the displayed option list.
   const text = String(value || "").trim();
   return options.find((option) => option.toLowerCase() === text.toLowerCase()) || fallback;
 }
@@ -41,6 +43,8 @@ function toFormEvent(event) {
 }
 
 function toApiEvent(form) {
+  // The API accepts snake_case fields because the payload maps directly onto the
+  // forecast_event_calendar table columns.
   return {
     event_code: form.eventCode,
     event_name: form.eventName,

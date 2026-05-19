@@ -40,6 +40,8 @@ function formatChartDateTime(value) {
 }
 
 function formatDuration(start, end) {
+  // PostgreSQL timestamps can include sub-millisecond precision, so duration
+  // math uses nanoseconds instead of relying only on Date milliseconds.
   if (!start || !end) {
     return "Not available";
   }
@@ -108,6 +110,8 @@ function CalibrationCoverageChart({ runs }) {
 
   const width = 920;
   const height = 390;
+  // The bottom gutter is intentionally generous because run labels include both
+  // date and time and are rotated for dense history.
   const padding = { top: 24, right: 28, bottom: 150, left: 64 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;

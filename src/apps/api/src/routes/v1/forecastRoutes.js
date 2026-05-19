@@ -56,6 +56,8 @@ router.get("/metrics/leaderboard", requirePermission(permissions.viewForecast), 
 });
 
 router.get("/dashboard-cards", requirePermission(permissions.viewForecast), async (_request, response) => {
+  // Read access is available to forecast users because the shell and dashboard
+  // both need these settings to decide what should be visible.
   await respondWithServiceCall(response, () => ForecastDashboardCardService.findAll());
 });
 

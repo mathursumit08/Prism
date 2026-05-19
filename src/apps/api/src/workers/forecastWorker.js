@@ -51,6 +51,8 @@ function getMonthRange(month) {
 }
 
 function matchesScopeValue(eventScopeValue, dealerScopeValue) {
+  // Scope values are entered by users, so match them case-insensitively against
+  // canonical dealer metadata from the database.
   return String(eventScopeValue || "").trim().toLowerCase() === String(dealerScopeValue || "").trim().toLowerCase();
 }
 
@@ -445,6 +447,8 @@ function addMonths(month, offset) {
  * Converts nested forecast output into rows that match the forecast_data table.
  */
 function flattenForecast({ runId, scope, forecast }) {
+  // The forecasting engine returns nested levels and series. Storage is flat so
+  // the API can filter by level/group/product dimensions efficiently.
   const records = [];
 
   for (const levelResult of forecast.levels) {
