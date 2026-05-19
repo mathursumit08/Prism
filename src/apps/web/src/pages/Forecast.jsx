@@ -20,7 +20,8 @@ const forecastModes = [
   { value: "blended", label: "Blended ensemble" }
 ];
 
-const defaultDashboardCardVisibility = Object.freeze({
+export const defaultDashboardCardVisibility = Object.freeze({
+  // Defaults keep the dashboard usable if the card settings API is unavailable.
   trend: true,
   segmentSplit: true,
   accuracyTrend: true,
@@ -50,7 +51,7 @@ function resolveForecastSectionFromHash(hash) {
   return "overview";
 }
 
-function buildDashboardCardVisibility(cards) {
+export function buildDashboardCardVisibility(cards) {
   return cards.reduce(
     (visibility, card) => ({
       ...visibility,
@@ -230,6 +231,8 @@ function buildContributionMonths(series) {
 }
 
 function aggregateSeriesBySegment(series) {
+  // The segment split chart can operate at both group and rollup levels, so it
+  // rebuilds a synthetic series by summing every group into its segment bucket.
   const grouped = new Map();
 
   for (const item of series) {
@@ -268,6 +271,8 @@ function aggregateSeriesBySegment(series) {
 }
 
 function transformVersionedRowsToSeries(rows) {
+  // The blended forecast API returns row-oriented forecast_data records. The
+  // charts consume the same nested series shape as the baseline endpoint.
   const groups = new Map();
 
   for (const row of rows) {
@@ -326,6 +331,8 @@ function ForecastChart({
 
   const width = 920;
   const height = 360;
+  // Reserve fixed chart gutters so month labels and y-axis values do not change
+  // the plotting area between different filters.
   const padding = { top: 24, right: 28, bottom: 68, left: 66 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;

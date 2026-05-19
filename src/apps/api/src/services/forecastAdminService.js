@@ -6,6 +6,8 @@ const FORECAST_TYPE = "baseline";
 const DEFAULT_HORIZON_MONTHS = 6;
 const allowedHorizons = new Set([6, 12, 24]);
 
+// This in-memory snapshot feeds the Manage Forecast screen while the worker is
+// running. Durable run history is still written to forecast_runs by the worker.
 const generationState = {
   running: false,
   stage: "idle",
@@ -199,6 +201,8 @@ export const ForecastAdminService = {
 
     resetGenerationState(numericHorizon);
 
+    // Regeneration runs in the background so the API can return immediately and
+    // the UI can poll getStatus for live progress.
     runForecastWorker({
       horizon: numericHorizon,
       onProgress(progress) {

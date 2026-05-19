@@ -32,6 +32,8 @@ function parseOptionalHorizon(value) {
 }
 
 export const forecastEndpointConfigs = {
+  // Versioned endpoint aliases all resolve into the same forecast_data store,
+  // with each alias constraining the level or output shape it exposes.
   baseline: {
     endpoint: "baseline",
     level: null
@@ -93,6 +95,8 @@ export async function getBaselineForecastPayload(user, query) {
     endDate,
     horizon
   };
+  // The latest completed run id is part of the cache key so a regeneration
+  // naturally invalidates stale response payloads.
   const cacheKey = buildCacheKey(latestRun.run_id, {
     ...filters,
     username: user.username

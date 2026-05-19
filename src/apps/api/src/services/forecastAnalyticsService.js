@@ -65,6 +65,8 @@ async function ensureAnalyticsAccess(user, level, groupId) {
 }
 
 function appendScopeCondition(conditions, values, scope) {
+  // Diagnostics can query broad historical joins, so scope filtering is appended
+  // close to the SQL builder to avoid accidental unrestricted reads.
   if (!scope || scope.kind === "all") {
     return;
   }
@@ -110,6 +112,8 @@ function appendScopeCondition(conditions, values, scope) {
 }
 
 function buildObservationQuery({ user, query, includeLimit = false }) {
+  // Observations power both scatter plots and leaderboards; this shared builder
+  // keeps their filters and RBAC checks aligned.
   const level = parseLevel(query, user);
   const groupId = query.groupId?.trim() || null;
   const segment = query.segment?.trim() || null;

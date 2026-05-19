@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import Forecast from "./pages/Forecast.jsx";
+import { useEffect, useMemo, useState } from "react";
+import Forecast, { buildDashboardCardVisibility, defaultDashboardCardVisibility } from "./pages/Forecast.jsx";
 import ManageForecast from "./pages/ManageForecast.jsx";
 import ForecastEvents from "./pages/ForecastEvents.jsx";
 import DashboardCards from "./pages/DashboardCards.jsx";
@@ -30,6 +30,15 @@ function resolvePageFromHash(hash) {
 
   return "home";
 }
+
+const forecastNavDefinitions = [
+  // Each dashboard side-menu item owns a group of cards. When an admin hides every
+  // card in a group, the menu item is hidden as well.
+  { hash: "#forecast", label: "Forecast Monitor", cards: ["trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
+  { hash: "#forecast-diagnostics", label: "Diagnostics", cards: ["accuracyTrend", "biasTrend", "actualPredicted", "errorDistribution"] },
+  { hash: "#forecast-leaderboard", label: "Leaderboard", cards: ["leaderboard"] },
+  { hash: "#forecast-tables", label: "Forecast Data", cards: ["segmentBreakdown", "forecastData"] }
+];
 
 function HomePage({ user }) {
   return (
@@ -85,14 +94,23 @@ function HomePage({ user }) {
 }
 
 export default function App() {
-  const { booting, isAuthenticated, logout, user } = useAuth();
+  const { apiFetch, booting, isAuthenticated, logout, user } = useAuth();
   const [page, setPage] = useState(() => resolvePageFromHash(window.location.hash));
   const [currentHash, setCurrentHash] = useState(() => window.location.hash || "#forecast");
+  const [dashboardCardVisibility, setDashboardCardVisibility] = useState({ ...defaultDashboardCardVisibility });
   const canViewForecast = user?.permissions?.includes("View Forecast");
   const canManageForecast = user?.permissions?.includes("Manage Forecast");
   const isAdmin = user?.role === "Admin";
   const forecastHomeRoles = new Set(["Admin", "National Head", "Regional Head", "Dealer Head", "Dealer Manager"]);
   const usesForecastHome = Boolean(user && forecastHomeRoles.has(user.role) && canViewForecast);
+  const visibleForecastNavItems = useMemo(
+    () =>
+      usesForecastHome
+        ? forecastNavDefinitions.filter((item) => item.cards.some((cardKey) => dashboardCardVisibility[cardKey]))
+        : [],
+    [dashboardCardVisibility, usesForecastHome]
+  );
+  const canUseForecastDashboard = usesForecastHome && visibleForecastNavItems.length > 0;
 
   useEffect(() => {
     function handleHashChange() {
@@ -104,6 +122,44 @@ export default function App() {
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !canViewForecast) {
+      setDashboardCardVisibility({ ...defaultDashboardCardVisibility });
+      return undefined;
+    }
+
+    const controller = new AbortController();
+
+    async function loadDashboardCardVisibility() {
+      // The shell needs the same visibility map as ForecastPage so the sidebar
+      // can disappear sections that have no visible cards left.
+      try {
+        const response = await apiFetch("/api/v1/forecasts/dashboard-cards", {
+          signal: controller.signal
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || "Unable to load dashboard card settings.");
+        }
+
+        setDashboardCardVisibility(buildDashboardCardVisibility(payload.cards || []));
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          setDashboardCardVisibility({ ...defaultDashboardCardVisibility });
+        }
+      }
+    }
+
+    loadDashboardCardVisibility();
+    window.addEventListener("dashboard-card-settings-changed", loadDashboardCardVisibility);
+
+    return () => {
+      controller.abort();
+      window.removeEventListener("dashboard-card-settings-changed", loadDashboardCardVisibility);
+    };
+  }, [apiFetch, canViewForecast, isAuthenticated]);
 
   function navigate(nextPage) {
     window.location.hash =
@@ -129,7 +185,18 @@ export default function App() {
     if (page === "dashboard-cards" && !isAdmin) {
       navigate("home");
     }
-  }, [canManageForecast, canViewForecast, isAdmin, isAuthenticated, page, user]);
+
+    if (page === "home" && usesForecastHome) {
+      const currentForecastItem = forecastNavDefinitions.find((item) => item.hash === currentHash);
+      const currentForecastItemVisible = visibleForecastNavItems.some((item) => item.hash === currentHash);
+
+      // If an admin hides the section the user is currently viewing, move them to
+      // the first remaining section instead of leaving the content area empty.
+      if (currentForecastItem && !currentForecastItemVisible) {
+        window.location.hash = visibleForecastNavItems[0]?.hash || "#home";
+      }
+    }
+  }, [canManageForecast, canViewForecast, currentHash, isAdmin, isAuthenticated, page, user, usesForecastHome, visibleForecastNavItems]);
 
   if (booting) {
     return (
@@ -146,14 +213,7 @@ export default function App() {
     return <LoginPage />;
   }
 
-  const forecastNavItems = usesForecastHome
-    ? [
-        { hash: "#forecast", label: "Forecast Monitor" },
-        { hash: "#forecast-diagnostics", label: "Diagnostics" },
-        { hash: "#forecast-leaderboard", label: "Leaderboard" },
-        { hash: "#forecast-tables", label: "Forecast Data" }
-      ]
-    : [{ hash: "#home", label: "Home" }];
+  const forecastNavItems = canUseForecastDashboard ? visibleForecastNavItems : [{ hash: "#home", label: "Home" }];
   const manageNavItems = [
     ...(canManageForecast ? [{ hash: "#admin", label: "Manage Forecast" }] : []),
     ...(canManageForecast ? [{ hash: "#forecast-events", label: "Forecast Events" }] : []),
@@ -227,7 +287,7 @@ export default function App() {
       </aside>
 
       <div className="app-content">
-        {page === "home" && usesForecastHome ? (
+        {page === "home" && canUseForecastDashboard ? (
           <Forecast />
         ) : page === "admin" && canManageForecast ? (
           <ManageForecast />

@@ -14,6 +14,8 @@ const port = process.env.PORT || 4000;
 const clientOrigin = process.env.CLIENT_ORIGIN || "http://localhost:5173";
 const allowedOrigins = new Set([clientOrigin, "http://localhost:5173", "http://127.0.0.1:5173"]);
 
+// Express does not need the full cookie-parser package here; auth only needs a
+// simple cookie map so refresh-token routes can read the HTTP-only cookie.
 function parseCookies(request, _response, next) {
   const rawCookieHeader = request.headers.cookie || "";
   request.cookies = Object.fromEntries(
@@ -33,6 +35,8 @@ function parseCookies(request, _response, next) {
 
 app.use(
   cors((request, callback) => {
+    // Allow the configured client and same-origin API docs, while still blocking
+    // arbitrary browser origins from using credentialed requests.
     const origin = request.header("Origin");
     const forwardedProto = request.header("X-Forwarded-Proto");
     const protocol = forwardedProto || request.protocol;

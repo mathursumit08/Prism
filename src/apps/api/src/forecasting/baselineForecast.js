@@ -635,6 +635,8 @@ function buildEmptyCalibration(horizon) {
 }
 
 function buildCalibration(values, horizon, method, fallbackScale = 0) {
+  // Backtest the selected method from multiple historical origins so interval
+  // widths reflect recent forecast misses instead of a fixed percentage.
   const residualsByHorizon = Array.from({ length: horizon }, () => []);
   const maxHoldoutOrigins = Math.min(12, Math.max(0, values.length - MIN_SERIES_LENGTH));
   const firstOrigin = values.length - maxHoldoutOrigins;
@@ -709,6 +711,8 @@ function buildForecastPoints(forecast, horizon, calibration) {
 }
 
 function scaleForecastPoint(point, share) {
+  // Sparse dealers borrow a zone-level forecast, then scale units and intervals
+  // by their historical or capacity-based share of that zone.
   const scaledUnits = roundForecast(point.unitsSold * share);
   const lower80 = Math.min(scaledUnits, roundInterval((point.lower80 ?? point.unitsSold) * share));
   const upper80 = Math.max(scaledUnits, roundInterval((point.upper80 ?? point.unitsSold) * share));
@@ -727,6 +731,8 @@ function scaleForecastPoint(point, share) {
 }
 
 function applyBiasCorrection(point, correction) {
+  // Bias correction shifts the point forecast and intervals by the same delta so
+  // the adjusted point remains inside both prediction bands.
   const factor = roundCorrection(correction);
   const adjustedUnits = roundForecast(point.unitsSold * factor);
   const delta = adjustedUnits - point.unitsSold;

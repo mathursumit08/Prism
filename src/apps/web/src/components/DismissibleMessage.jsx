@@ -1,4 +1,6 @@
 export default function DismissibleMessage({ children, kind = "notice", onClose }) {
+  // Shared by management pages so transient success/error states behave the same
+  // way and can be dismissed without clearing the rest of the page state.
   const className = kind === "success" ? "page-success dismissible-message" : "page-notice dismissible-message";
 
   return (
