@@ -2,18 +2,32 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import { pool } from "../db.js";
 import { buildBaselineForecast } from "../forecasting/baselineForecast.js";
-import { ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
+import { buildPartsDemandForecast, buildServiceOrderForecast } from "../forecasting/domainForecasts.js";
+import { DomainForecastData, ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
 import { ForecastCacheService } from "../services/forecastCacheService.js";
 import { ForecastBiasService } from "../services/forecastBiasService.js";
 
 dotenv.config();
 
 const FORECAST_TYPE = "baseline";
+const SALES_DOMAIN = "Sales";
+const PARTS_DOMAIN = "Parts";
+const SERVICE_DOMAIN = "Service";
+const PARTS_FORECAST_TYPE = "demand";
+const SERVICE_FORECAST_TYPE = "order_volume";
 const DEFAULT_HORIZON = 6;
 const MAX_BATCH_SIZE = 500;
 const CALIBRATION_TOLERANCE_PERCENTAGE_POINTS = 2;
 const workerLockId = 46013520;
+const domainWorkerLockIds = {
+  [PARTS_DOMAIN]: 46013521,
+  [SERVICE_DOMAIN]: 46013522
+};
 const currentFile = fileURLToPath(import.meta.url);
+
+function domainDataKey(domain) {
+  return String(domain || "").toLowerCase();
+}
 
 /**
  * Builds a stable forecast key used to compare current rows against a rerun result set.
@@ -80,6 +94,10 @@ function findMatchingEvents(point, dealer, eventCalendar) {
 
     if (scope === "state") {
       return matchesScopeValue(event.scope_value, dealer.state);
+    }
+
+    if (scope === "service center") {
+      return matchesScopeValue(event.scope_value, dealer.serviceCenterId);
     }
 
     return false;
@@ -155,6 +173,34 @@ function applyEventUpliftsToDealerSeries(dealerSeries, eventCalendar) {
     ...series,
     method: `${series.method} + event-uplift`,
     forecast: series.forecast.map((point) => applyPointUplift(point, series, eventCalendar))
+  }));
+}
+
+function applyDomainPointUplift(point, series, eventCalendar) {
+  const matchingEvents = findMatchingEvents(point, series, eventCalendar);
+  const totalUpliftPct = matchingEvents.reduce((sum, event) => sum + Number(event.uplift_pct), 0);
+  const upliftFactor = 1 + totalUpliftPct / 100;
+  const upliftedUnits = Math.max(0, Math.round(point.units * upliftFactor));
+
+  return {
+    ...point,
+    units: upliftedUnits,
+    lower80: Math.max(0, Math.round((point.lower80 ?? point.units) * upliftFactor)),
+    upper80: Math.max(0, Math.round((point.upper80 ?? point.units) * upliftFactor)),
+    lower95: Math.max(0, Math.round((point.lower95 ?? point.units) * upliftFactor)),
+    upper95: Math.max(0, Math.round((point.upper95 ?? point.units) * upliftFactor))
+  };
+}
+
+function applyEventUpliftsToDomainSeries(serviceCenterSeries, eventCalendar) {
+  if (eventCalendar.length === 0) {
+    return serviceCenterSeries;
+  }
+
+  return serviceCenterSeries.map((series) => ({
+    ...series,
+    method: `${series.method} + event-uplift`,
+    forecast: series.forecast.map((point) => applyDomainPointUplift(point, series, eventCalendar))
   }));
 }
 
@@ -374,17 +420,25 @@ async function fetchForecastScopes(db = pool) {
     db.query(`
       SELECT DISTINCT segment
       FROM vehicle_models
+      WHERE is_active = TRUE
+        AND is_discontinued = FALSE
       ORDER BY segment
     `),
     db.query(`
       SELECT model_id, segment
       FROM vehicle_models
+      WHERE is_active = TRUE
+        AND is_discontinued = FALSE
       ORDER BY segment, model_id
     `),
     db.query(`
       SELECT vv.model_id, vv.variant_id, vm.segment
       FROM vehicle_variants vv
       JOIN vehicle_models vm ON vm.model_id = vv.model_id
+      WHERE vv.is_active = TRUE
+        AND vv.is_discontinued = FALSE
+        AND vm.is_active = TRUE
+        AND vm.is_discontinued = FALSE
       ORDER BY vm.segment, vv.model_id, vv.variant_id
     `)
   ]);
@@ -419,7 +473,18 @@ async function fetchForecastScopes(db = pool) {
 async function fetchEventCalendar(db = pool) {
   return ForecastEventCalendar.findActive(
     {
+      forecastDomain: SALES_DOMAIN,
       forecastType: FORECAST_TYPE
+    },
+    db
+  );
+}
+
+async function fetchDomainEventCalendar(domain, forecastType, db = pool) {
+  return ForecastEventCalendar.findActive(
+    {
+      forecastDomain: domain,
+      forecastType
     },
     db
   );
@@ -428,10 +493,113 @@ async function fetchEventCalendar(db = pool) {
 async function fetchLatestActualMonth(db = pool) {
   const result = await db.query(`
     SELECT TO_CHAR(MAX(month), 'YYYY-MM-01') AS latest_actual_month
-    FROM monthly_sales_data
+    FROM monthly_sales_data m
+    JOIN dealers d ON d.dealer_id = m.dealer_id
+    JOIN vehicle_models vm ON vm.model_id = m.model_id
+    JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+      AND vv.model_id = m.model_id
+    WHERE d.is_active = TRUE
+      AND vm.is_active = TRUE
+      AND vm.is_discontinued = FALSE
+      AND vv.is_active = TRUE
+      AND vv.is_discontinued = FALSE
   `);
 
   return result.rows[0]?.latest_actual_month ?? null;
+}
+
+async function fetchPartsForecastScopes(db = pool) {
+  await db.query("SELECT 1");
+  return [
+    {
+      partCategory: null,
+      partId: null,
+      modelId: null,
+      variantId: null
+    }
+  ];
+}
+
+function aggregateAdjustedDomainSeries(baseSeries, level) {
+  const grouped = new Map();
+
+  for (const series of baseSeries) {
+    const groupId = level === "state" ? series.state : series.zone;
+    const key = [
+      groupId,
+      series.partId ?? "",
+      series.partCategory ?? "",
+      series.serviceType ?? "",
+      series.jobCategory ?? "",
+      series.modelId ?? "",
+      series.variantId ?? ""
+    ].join("|");
+
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        ...series,
+        level,
+        groupId,
+        groupLabel: groupId,
+        method: "aggregated-from-service-centers + event-uplift",
+        validation: {
+          mae: null,
+          rmse: null,
+          mape: null
+        },
+        forecast: series.forecast.map((point) => ({
+          month: point.month,
+          units: 0,
+          lower80: 0,
+          upper80: 0,
+          lower95: 0,
+          upper95: 0
+        }))
+      });
+    }
+
+    const aggregate = grouped.get(key);
+    series.forecast.forEach((point, index) => {
+      aggregate.forecast[index].units += point.units;
+      aggregate.forecast[index].lower80 += point.lower80 ?? point.units;
+      aggregate.forecast[index].upper80 += point.upper80 ?? point.units;
+      aggregate.forecast[index].lower95 += point.lower95 ?? point.units;
+      aggregate.forecast[index].upper95 += point.upper95 ?? point.units;
+    });
+  }
+
+  return [...grouped.values()];
+}
+
+function buildAdjustedDomainForecastLevels(serviceCenterSeries, eventCalendar) {
+  const adjustedServiceCenters = applyEventUpliftsToDomainSeries(serviceCenterSeries, eventCalendar);
+
+  return [
+    {
+      level: "service_center",
+      series: adjustedServiceCenters
+    },
+    {
+      level: "state",
+      series: aggregateAdjustedDomainSeries(adjustedServiceCenters, "state")
+    },
+    {
+      level: "zone",
+      series: aggregateAdjustedDomainSeries(adjustedServiceCenters, "zone")
+    }
+  ];
+}
+
+async function fetchServiceForecastScopes(db = pool) {
+  await db.query("SELECT 1");
+  return [
+    {
+      serviceType: null,
+      jobCategory: null,
+      modelId: null,
+      variantId: null
+    }
+  ];
 }
 
 function addMonths(month, offset) {
@@ -485,6 +653,46 @@ function flattenForecast({ runId, scope, forecast }) {
   return records;
 }
 
+function flattenDomainForecast({ domain, runId, scope, forecast }) {
+  const forecastType = domain === PARTS_DOMAIN ? PARTS_FORECAST_TYPE : SERVICE_FORECAST_TYPE;
+  const records = [];
+
+  for (const levelResult of forecast.levels) {
+    for (const series of levelResult.series) {
+      for (const [index, point] of series.forecast.entries()) {
+        records.push({
+          runId,
+          forecastType,
+          level: series.level,
+          groupId: series.groupId,
+          groupLabel: series.groupLabel,
+          partId: series.partId ?? scope.partId ?? null,
+          partCategory: series.partCategory ?? scope.partCategory ?? null,
+          serviceType: series.serviceType ?? scope.serviceType ?? null,
+          jobCategory: series.jobCategory ?? scope.jobCategory ?? null,
+          modelId: series.modelId ?? scope.modelId ?? null,
+          variantId: series.variantId ?? scope.variantId ?? null,
+          forecastMonth: point.month,
+          forecastUnits: point.units,
+          forecastOrders: point.units,
+          lower80: point.lower80 ?? point.units,
+          upper80: point.upper80 ?? point.units,
+          lower95: point.lower95 ?? point.units,
+          upper95: point.upper95 ?? point.units,
+          horizonMonth: index + 1,
+          modelMethod: series.method,
+          validationMae: series.validation.mae,
+          validationRmse: series.validation.rmse,
+          validationMape: series.validation.mape,
+          dataQuality: series.method.startsWith("croston") ? "intermittent" : "rich"
+        });
+      }
+    }
+  }
+
+  return records;
+}
+
 function collectCalibrationSummaries({ scope, forecast }) {
   const summaries = [];
   const dealerLevel = forecast.levels.find((levelResult) => levelResult.level === "dealer");
@@ -529,6 +737,16 @@ async function insertInBatches(records, db = pool) {
 
   for (let index = 0; index < records.length; index += MAX_BATCH_SIZE) {
     inserted += await ForecastData.insertMany(records.slice(index, index + MAX_BATCH_SIZE), db);
+  }
+
+  return inserted;
+}
+
+async function insertDomainInBatches(domain, records, db = pool) {
+  let inserted = 0;
+
+  for (let index = 0; index < records.length; index += MAX_BATCH_SIZE) {
+    inserted += await DomainForecastData.insertMany(domain, records.slice(index, index + MAX_BATCH_SIZE), db);
   }
 
   return inserted;
@@ -609,6 +827,7 @@ export async function runForecastWorker({
 
     run = await ForecastRun.create(
       {
+        forecastDomain: SALES_DOMAIN,
         forecastType: FORECAST_TYPE,
         horizonMonths: horizon
       },
@@ -770,6 +989,224 @@ export async function runForecastWorker({
   }
 }
 
+export async function runPartsForecastWorker({
+  horizon = parseHorizon(process.env.FORECAST_HORIZON_MONTHS),
+  onProgress
+} = {}) {
+  return runDomainForecastWorker({
+    domain: PARTS_DOMAIN,
+    forecastType: PARTS_FORECAST_TYPE,
+    horizon,
+    fetchScopes: fetchPartsForecastScopes,
+    buildForecast: (scope, db) => buildPartsDemandForecast({ horizon, scope, db }),
+    onProgress
+  });
+}
+
+export async function runServiceForecastWorker({
+  horizon = parseHorizon(process.env.FORECAST_HORIZON_MONTHS),
+  onProgress
+} = {}) {
+  return runDomainForecastWorker({
+    domain: SERVICE_DOMAIN,
+    forecastType: SERVICE_FORECAST_TYPE,
+    horizon,
+    fetchScopes: fetchServiceForecastScopes,
+    buildForecast: (scope, db) => buildServiceOrderForecast({ horizon, scope, db }),
+    onProgress
+  });
+}
+
+export async function runAllForecastWorkers({
+  horizon = parseHorizon(process.env.FORECAST_HORIZON_MONTHS),
+  onProgress
+} = {}) {
+  const sales = await runForecastWorker({
+    horizon,
+    onProgress: (progress) => reportProgress(onProgress, { ...progress, forecastDomain: SALES_DOMAIN })
+  });
+  const parts = await runPartsForecastWorker({
+    horizon,
+    onProgress: (progress) => reportProgress(onProgress, { ...progress, forecastDomain: PARTS_DOMAIN })
+  });
+  const service = await runServiceForecastWorker({
+    horizon,
+    onProgress: (progress) => reportProgress(onProgress, { ...progress, forecastDomain: SERVICE_DOMAIN })
+  });
+
+  return {
+    sales,
+    parts,
+    service
+  };
+}
+
+async function runDomainForecastWorker({
+  domain,
+  forecastType,
+  horizon,
+  fetchScopes,
+  buildForecast,
+  onProgress
+}) {
+  const client = await pool.connect();
+  let run = null;
+
+  reportProgress(onProgress, {
+    stage: "initializing",
+    stageLabel: "Initializing",
+    message: `Preparing ${domain} ${horizon}-month forecast regeneration.`,
+    horizon
+  });
+
+  try {
+    const lockId = domainWorkerLockIds[domain];
+    if (lockId) {
+      const lockResult = await client.query("SELECT pg_try_advisory_lock($1) AS locked", [lockId]);
+      if (!lockResult.rows[0]?.locked) {
+        reportProgress(onProgress, {
+          running: false,
+          stage: "failed",
+          stageLabel: "Failed",
+          message: `Another ${domain} forecast generation is already active.`,
+          error: `Another ${domain} forecast generation is already active.`
+        });
+        return {
+          skipped: true,
+          reason: "lock-not-acquired"
+        };
+      }
+    }
+
+    run = await ForecastRun.create(
+      {
+        forecastDomain: domain,
+        forecastType,
+        horizonMonths: horizon
+      },
+      client
+    );
+    await client.query("BEGIN");
+
+    reportProgress(onProgress, {
+      stage: "loading-source-data",
+      stageLabel: "Loading source data",
+      message: `Loading ${domain} source history.`,
+      runId: run.run_id
+    });
+
+    const scopes = await fetchScopes(client);
+    const eventCalendar = await fetchDomainEventCalendar(domain, forecastType, client);
+    const allRecords = [];
+
+    reportProgress(onProgress, {
+      stage: "processing",
+      stageLabel: "Processing",
+      message: `Generating ${domain} forecast scopes (0/${scopes.length}).`,
+      runId: run.run_id,
+      totalScopes: scopes.length,
+      processedScopes: 0
+    });
+
+    for (const [index, scope] of scopes.entries()) {
+      const rawForecast = await buildForecast(scope, client);
+      const forecast = {
+        ...rawForecast,
+        levels: buildAdjustedDomainForecastLevels(
+          rawForecast.levels.find((levelResult) => levelResult.level === "service_center")?.series ?? [],
+          eventCalendar
+        )
+      };
+      const scopeRecords = flattenDomainForecast({
+        domain,
+        runId: run.run_id,
+        scope,
+        forecast
+      });
+
+      for (const record of scopeRecords) {
+        allRecords.push(record);
+      }
+
+      reportProgress(onProgress, {
+        stage: "processing",
+        stageLabel: "Processing",
+        message: `Generating ${domain} forecast scopes (${index + 1}/${scopes.length}).`,
+        runId: run.run_id,
+        totalScopes: scopes.length,
+        processedScopes: index + 1
+      });
+    }
+
+    reportProgress(onProgress, {
+      stage: "saving-results",
+      stageLabel: "Saving forecast rows",
+      message: `Saving generated ${domain} forecast data.`,
+      runId: run.run_id,
+      totalScopes: scopes.length,
+      processedScopes: scopes.length
+    });
+
+    const inserted = await insertDomainInBatches(domainDataKey(domain), allRecords, client);
+    const completedRun = await ForecastRun.complete(
+      run.run_id,
+      {
+        coverage80: null,
+        coverage95: null,
+        sampleCount: 0,
+        avgWidth80: null,
+        avgWidth95: null,
+        horizonWidths: []
+      },
+      client
+    );
+
+    await client.query("COMMIT");
+    ForecastCacheService.clear();
+    reportProgress(onProgress, {
+      runId: completedRun.run_id,
+      stage: "finished",
+      stageLabel: "Finished successfully",
+      message: `${domain} forecast regeneration finished successfully.`,
+      inserted,
+      removed: 0,
+      totalScopes: scopes.length,
+      processedScopes: scopes.length
+    });
+
+    console.log(`Forecast worker completed ${domain} run ${completedRun.run_id}: ${inserted} upserted rows across ${scopes.length} scopes`);
+
+    return {
+      skipped: false,
+      runId: completedRun.run_id,
+      inserted,
+      removed: 0,
+      scopes: scopes.length
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+
+    if (run) {
+      await ForecastRun.fail(run.run_id, error.message);
+    }
+    reportProgress(onProgress, {
+      runId: run?.run_id ?? null,
+      stage: "failed",
+      stageLabel: "Failed",
+      message: error.message || `${domain} forecast worker failed.`,
+      error: error.message || `${domain} forecast worker failed.`
+    });
+    console.error(`${domain} forecast worker failed`, error);
+    throw error;
+  } finally {
+    const lockId = domainWorkerLockIds[domain];
+    if (lockId) {
+      await client.query("SELECT pg_advisory_unlock($1)", [lockId]).catch(() => {});
+    }
+    client.release();
+  }
+}
+
 /**
  * Keeps the worker process alive and schedules the next run for midnight.
  */
@@ -781,7 +1218,7 @@ function scheduleNextRun() {
 
   setTimeout(async () => {
     try {
-      await runForecastWorker();
+      await runAllForecastWorkers();
     } catch {
       // Failure is already logged and stored in forecast_runs.
     } finally {
@@ -792,9 +1229,18 @@ function scheduleNextRun() {
 
 if (process.argv[1] === currentFile) {
   const runOnce = process.argv.includes("--once");
+  const domainArgument = process.argv.find((argument) => argument.startsWith("--domain="));
+  const requestedDomain = domainArgument?.split("=")[1] ?? "all";
+  const runnerByDomain = {
+    all: runAllForecastWorkers,
+    sales: runForecastWorker,
+    parts: runPartsForecastWorker,
+    service: runServiceForecastWorker
+  };
+  const runner = runnerByDomain[requestedDomain] ?? runAllForecastWorkers;
 
   if (runOnce) {
-    runForecastWorker()
+    runner()
       .then(async () => {
         await pool.end();
       })

@@ -813,7 +813,24 @@ function fitBaseline(values, horizon) {
  */
 async function fetchDealerRows(filters) {
   const values = [];
-  const monthlyJoinConditions = ["d.dealer_id = m.dealer_id"];
+  const monthlyJoinConditions = [
+    "d.dealer_id = m.dealer_id",
+    `EXISTS (
+      SELECT 1
+      FROM vehicle_models vm_active
+      WHERE vm_active.model_id = m.model_id
+        AND vm_active.is_active = TRUE
+        AND vm_active.is_discontinued = FALSE
+    )`,
+    `EXISTS (
+      SELECT 1
+      FROM vehicle_variants vv_active
+      WHERE vv_active.variant_id = m.variant_id
+        AND vv_active.model_id = m.model_id
+        AND vv_active.is_active = TRUE
+        AND vv_active.is_discontinued = FALSE
+    )`
+  ];
 
   if (filters.segment) {
     values.push(filters.segment);
@@ -821,6 +838,8 @@ async function fetchDealerRows(filters) {
       SELECT 1
       FROM vehicle_models vm_filter
       WHERE vm_filter.model_id = m.model_id
+        AND vm_filter.is_active = TRUE
+        AND vm_filter.is_discontinued = FALSE
         AND vm_filter.segment = $${values.length}
     )`);
   }
@@ -853,6 +872,7 @@ async function fetchDealerRows(filters) {
       FROM dealers d
       LEFT JOIN monthly_sales_data m
         ON ${monthlyJoinConditions.join(" AND ")}
+      WHERE d.is_active = TRUE
       GROUP BY d.dealer_id, d.dealer_name, d.state, d.region, d.sales_capacity_per_month, m.month
       ORDER BY d.dealer_id, m.month
     `,

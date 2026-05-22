@@ -225,6 +225,53 @@ function validateLevel(level) {
   }
 }
 
+function salesScopeRegions(scope) {
+  return scope?.kind === "Region" ? [scope.region] : (scope?.regions || []);
+}
+
+function salesScopeDealerIds(scope) {
+  return scope?.kind === "Dealer" ? [scope.dealerId] : (scope?.dealerIds || []);
+}
+
+function hasOnlyDealerSalesScope(scope) {
+  return scope?.kind === "Dealer" || (
+    scope?.kind === "multi" &&
+    salesScopeDealerIds(scope).length > 0 &&
+    salesScopeRegions(scope).length === 0 &&
+    !scope.scopes?.some((item) => item.type === "National")
+  );
+}
+
+function appendSalesSourceScopeCondition(conditions, values, scope, dealerAlias = "d", parameterOffset = 0) {
+  if (scope?.kind === "none") {
+    conditions.push("FALSE");
+    return;
+  }
+
+  if (!scope || scope.kind === "all") {
+    return;
+  }
+
+  const regions = salesScopeRegions(scope);
+  const dealerIds = salesScopeDealerIds(scope);
+  const checks = [];
+  const prefix = dealerAlias ? `${dealerAlias}.` : "";
+
+  if (regions.length > 0) {
+    values.push(regions);
+    checks.push(`${prefix}region = ANY($${values.length + parameterOffset}::VARCHAR[])`);
+  }
+
+  if (dealerIds.length > 0) {
+    values.push(dealerIds);
+    checks.push(`${prefix}dealer_id = ANY($${values.length + parameterOffset}::VARCHAR[])`);
+  }
+
+  if (checks.length > 0) {
+    conditions.push(`(${checks.join(" OR ")})`);
+  }
+}
+
 async function ensureUserScopeAccess(user, level, groupId) {
   if (level && !canAccessForecastLevel(user, level)) {
     throw createHttpError(403, "This role cannot access the requested forecast level");
@@ -345,7 +392,13 @@ async function findActualRows({ level, groupId, segment, modelId, variantId, bre
   const resolvedLevel = levelColumns[level] ? level : "dealer";
   const config = levelColumns[resolvedLevel];
   const values = [];
-  const conditions = [];
+  const conditions = [
+    "d.is_active = TRUE",
+    "vm.is_active = TRUE",
+    "vm.is_discontinued = FALSE",
+    "vv.is_active = TRUE",
+    "vv.is_discontinued = FALSE"
+  ];
   const outputId = breakdown === "segment" ? "vm.segment" : config.id;
   const outputLabel = breakdown === "segment" ? "vm.segment" : config.label;
   const outputSegment = breakdown === "segment" ? "vm.segment" : "NULL::VARCHAR(40)";
@@ -372,15 +425,7 @@ async function findActualRows({ level, groupId, segment, modelId, variantId, bre
     conditions.push(`m.variant_id = $${values.length + 1}`);
   }
 
-  if (scope?.kind === "region") {
-    values.push(scope.region);
-    conditions.push(`d.region = $${values.length + 1}`);
-  }
-
-  if (scope?.kind === "dealer") {
-    values.push(scope.dealerId);
-    conditions.push(`d.dealer_id = $${values.length + 1}`);
-  }
+  appendSalesSourceScopeCondition(conditions, values, scope, "d", 1);
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const result = await pool.query(
@@ -395,6 +440,8 @@ async function findActualRows({ level, groupId, segment, modelId, variantId, bre
       FROM monthly_sales_data m
       JOIN dealers d ON d.dealer_id = m.dealer_id
       JOIN vehicle_models vm ON vm.model_id = m.model_id
+      JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+        AND vv.model_id = m.model_id
       ${where}
       GROUP BY ${groupByColumns}
       ORDER BY ${outputLabel}, m.month
@@ -464,7 +511,7 @@ async function buildBlendedForecastResult(filters, scope) {
   const scopedDealerRows = await filterDealerRowsByRegion(dealerRows, filters.region, scope);
   const dealerZones = await findDealerZones(scopedDealerRows.map((row) => row.group_id), scope);
   const requiredZones = new Set([...dealerZones.values()].filter(Boolean));
-  const zoneScope = scope.kind === "dealer" ? { kind: "all" } : scope;
+  const zoneScope = hasOnlyDealerSalesScope(scope) ? { kind: "all" } : scope;
   const zoneRows = await ForecastData.findLatest({
     forecastType: "baseline",
     groupId: filters.region || (requiredZones.size === 1 ? [...requiredZones][0] : null),
@@ -582,18 +629,10 @@ async function findDealerZones(dealerIds, scope) {
     return new Map();
   }
 
-  const conditions = ["dealer_id = ANY($1::VARCHAR[])"];
+  const conditions = ["dealer_id = ANY($1::VARCHAR[])", "is_active = TRUE"];
   const values = [uniqueDealerIds];
 
-  if (scope.kind === "region") {
-    values.push(scope.region);
-    conditions.push(`region = $${values.length}`);
-  }
-
-  if (scope.kind === "dealer") {
-    values.push(scope.dealerId);
-    conditions.push(`dealer_id = $${values.length}`);
-  }
+  appendSalesSourceScopeCondition(conditions, values, scope, "");
 
   const result = await pool.query(
     `
@@ -754,21 +793,24 @@ async function filterDealerRowsByRegion(rows, region, scope) {
     return rows;
   }
 
-  if (scope.kind === "region" && scope.region !== region) {
+  const scopedRegions = salesScopeRegions(scope);
+  const scopedDealerIds = salesScopeDealerIds(scope);
+  if (scopedRegions.length > 0 && !scopedRegions.includes(region)) {
     return [];
   }
 
-  if (scope.kind === "dealer") {
+  if (scopedDealerIds.length > 0 && scopedRegions.length === 0) {
     const result = await pool.query(
       `
         SELECT region
         FROM dealers
-        WHERE dealer_id = $1
+        WHERE dealer_id = ANY($1::VARCHAR[])
+          AND is_active = TRUE
       `,
-      [scope.dealerId]
+      [scopedDealerIds]
     );
 
-    if (result.rows[0]?.region !== region) {
+    if (!result.rows.some((row) => row.region === region)) {
       return [];
     }
   }
@@ -778,6 +820,7 @@ async function filterDealerRowsByRegion(rows, region, scope) {
       SELECT dealer_id
       FROM dealers
       WHERE region = $1
+        AND is_active = TRUE
     `,
     [region]
   );

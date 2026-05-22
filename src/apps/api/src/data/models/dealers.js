@@ -7,6 +7,7 @@ export const Dealer = createModel({
     dealerId: "dealer_id",
     city: "city",
     dealerType: "dealer_type",
+    isActive: "is_active",
     region: "region",
     state: "state"
   }

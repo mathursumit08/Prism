@@ -175,7 +175,16 @@ export const ForecastData = {
           AND NOT EXISTS (
             SELECT 1
             FROM monthly_sales_data m
+            JOIN dealers d ON d.dealer_id = m.dealer_id
+            JOIN vehicle_models vm ON vm.model_id = m.model_id
+            JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+              AND vv.model_id = m.model_id
             WHERE m.month = fd.forecast_month
+              AND d.is_active = TRUE
+              AND vm.is_active = TRUE
+              AND vm.is_discontinued = FALSE
+              AND vv.is_active = TRUE
+              AND vv.is_discontinued = FALSE
           )
       `,
       [forecastType]
@@ -445,46 +454,65 @@ function appendDateConditions(conditions, values, startDate, endDate) {
 }
 
 function appendScopeCondition(conditions, values, scope) {
+  if (scope?.kind === "none") {
+    conditions.push("FALSE");
+    return;
+  }
+
   if (!scope || scope.kind === "all") {
     return;
   }
 
-  if (scope.kind === "region") {
-    values.push(scope.region);
-    const parameter = `$${values.length}`;
-    conditions.push(`
-      EXISTS (
-        SELECT 1
-        FROM dealers d_scope
-        WHERE (
-          fd.level = 'zone'
-          AND d_scope.region = fd.group_id
-          AND d_scope.region = ${parameter}
-        ) OR (
-          fd.level = 'state'
-          AND d_scope.state = fd.group_id
-          AND d_scope.region = ${parameter}
-        ) OR (
-          fd.level = 'dealer'
-          AND d_scope.dealer_id = fd.group_id
-          AND d_scope.region = ${parameter}
-        )
-      )
-    `);
+  const regions = scope.kind === "Region" ? [scope.region] : (scope.regions || []);
+  const dealerIds = scope.kind === "Dealer" ? [scope.dealerId] : (scope.dealerIds || []);
+  if (regions.length === 0 && dealerIds.length === 0) {
     return;
   }
 
-  if (scope.kind === "dealer") {
-    values.push(scope.dealerId);
+  const scopeChecks = [];
+  if (regions.length > 0) {
+    values.push(regions);
     const parameter = `$${values.length}`;
-    conditions.push("fd.level = 'dealer'");
-    conditions.push(`
-      EXISTS (
-        SELECT 1
-        FROM dealers d_scope
-        WHERE d_scope.dealer_id = fd.group_id
-          AND d_scope.dealer_id = ${parameter}
+    scopeChecks.push(`
+      (
+        (
+          fd.level = 'zone'
+          AND d_scope.region = fd.group_id
+          AND d_scope.region = ANY(${parameter}::VARCHAR[])
+          AND d_scope.is_active = TRUE
+        ) OR (
+          fd.level = 'state'
+          AND d_scope.state = fd.group_id
+          AND d_scope.region = ANY(${parameter}::VARCHAR[])
+          AND d_scope.is_active = TRUE
+        ) OR (
+          fd.level = 'dealer'
+          AND d_scope.dealer_id = fd.group_id
+          AND d_scope.region = ANY(${parameter}::VARCHAR[])
+          AND d_scope.is_active = TRUE
+        )
       )
     `);
   }
+
+  if (dealerIds.length > 0) {
+    values.push(dealerIds);
+    const parameter = `$${values.length}`;
+    scopeChecks.push(`
+      (
+        fd.level = 'dealer'
+        AND d_scope.dealer_id = fd.group_id
+        AND d_scope.dealer_id = ANY(${parameter}::VARCHAR[])
+        AND d_scope.is_active = TRUE
+      )
+    `);
+  }
+
+  conditions.push(`
+    EXISTS (
+      SELECT 1
+      FROM dealers d_scope
+      WHERE ${scopeChecks.join(" OR ")}
+    )
+  `);
 }

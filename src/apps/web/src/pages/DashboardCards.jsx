@@ -4,12 +4,17 @@ import DismissibleMessage from "../components/DismissibleMessage.jsx";
 
 function groupCards(cards) {
   return cards.reduce((groups, card) => {
-    const key = card.category || "Graphs";
-    if (!groups[key]) {
-      groups[key] = [];
+    const domain = card.domain || "Sales";
+    const category = card.category || "Graphs";
+    if (!groups[domain]) {
+      groups[domain] = {};
     }
 
-    groups[key].push(card);
+    if (!groups[domain][category]) {
+      groups[domain][category] = [];
+    }
+
+    groups[domain][category].push(card);
     return groups;
   }, {});
 }
@@ -65,11 +70,11 @@ export default function DashboardCardsPage() {
     return () => controller.abort();
   }, [apiFetch]);
 
-  function updateCard(cardKey, enabled) {
+  function updateCard(domain, cardKey, enabled) {
     setState((current) => ({
       ...current,
       message: "",
-      cards: current.cards.map((card) => (card.key === cardKey ? { ...card, enabled } : card))
+      cards: current.cards.map((card) => (card.domain === domain && card.key === cardKey ? { ...card, enabled } : card))
     }));
   }
 
@@ -89,6 +94,7 @@ export default function DashboardCardsPage() {
         },
         body: JSON.stringify({
           cards: state.cards.map((card) => ({
+            domain: card.domain,
             key: card.key,
             enabled: card.enabled
           }))
@@ -125,8 +131,8 @@ export default function DashboardCardsPage() {
       <section className="dashboard-header">
         <div>
           <p className="eyebrow">Dashboard Cards</p>
-          <h1>Choose which forecast cards appear on the Home dashboard.</h1>
-          <p className="admin-header-copy">Changes apply globally for users who can view the forecast dashboard.</p>
+          <h1>Choose which forecast cards appear by dashboard.</h1>
+          <p className="admin-header-copy">Changes apply globally for users who can view Sales, Parts, or Service forecast dashboards.</p>
         </div>
         <div className="admin-hero-card">
           <span className="status-badge healthy">Admin only</span>
@@ -161,24 +167,29 @@ export default function DashboardCardsPage() {
           <p className="notice compact-notice">Loading dashboard cards...</p>
         ) : (
           <div className="dashboard-card-groups">
-            {Object.entries(groupedCards).map(([category, cards]) => (
-              <section key={category} className="dashboard-card-group">
-                <h3>{category}</h3>
-                <div className="dashboard-card-toggle-grid">
-                  {cards.map((card) => (
-                    <label key={card.key} className="dashboard-card-toggle">
-                      <input
-                        type="checkbox"
-                        checked={card.enabled}
-                        onChange={(event) => updateCard(card.key, event.target.checked)}
-                      />
-                      <span>
-                        <strong>{card.label}</strong>
-                        <small>{card.enabled ? "Visible" : "Hidden"}</small>
-                      </span>
-                    </label>
-                  ))}
-                </div>
+            {["Sales", "Parts", "Service"].map((domain) => (
+              <section key={domain} className="dashboard-card-group">
+                <h3>{domain}</h3>
+                {Object.entries(groupedCards[domain] || {}).map(([category, cards]) => (
+                  <div key={`${domain}-${category}`} className="dashboard-card-domain-section">
+                    <p className="eyebrow">{category}</p>
+                    <div className="dashboard-card-toggle-grid">
+                      {cards.map((card) => (
+                        <label key={`${card.domain}-${card.key}`} className="dashboard-card-toggle">
+                          <input
+                            type="checkbox"
+                            checked={card.enabled}
+                            onChange={(event) => updateCard(card.domain, card.key, event.target.checked)}
+                          />
+                          <span>
+                            <strong>{card.label}</strong>
+                            <small>{card.enabled ? "Visible" : "Hidden"}</small>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </section>
             ))}
           </div>

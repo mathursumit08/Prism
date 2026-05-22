@@ -27,11 +27,12 @@ ALTER TABLE forecast_event_calendar
   ALTER COLUMN scope SET DEFAULT 'National';
 
 ALTER TABLE forecast_event_calendar
+  ALTER COLUMN scope TYPE VARCHAR(20),
   ADD CONSTRAINT forecast_event_calendar_event_type_check CHECK (event_type IN ('Festive', 'Regulatory', 'Promotional', 'Holiday', 'Other')),
-  ADD CONSTRAINT forecast_event_calendar_scope_check CHECK (scope IN ('National', 'Zone', 'State')),
+  ADD CONSTRAINT forecast_event_calendar_scope_check CHECK (scope IN ('National', 'Zone', 'State', 'Service Center')),
   ADD CONSTRAINT forecast_event_calendar_scope_value_check CHECK (
     (scope = 'National' AND scope_value IS NULL)
-    OR (scope IN ('Zone', 'State') AND scope_value IS NOT NULL AND LENGTH(TRIM(scope_value)) > 0)
+    OR (scope <> 'National' AND scope_value IS NOT NULL AND LENGTH(TRIM(scope_value)) > 0)
   );
 
 COMMIT;
