@@ -950,7 +950,7 @@ export default function ForecastPage() {
 
     async function loadDashboardCards() {
       try {
-        const response = await apiFetch("/api/v1/forecasts/dashboard-cards", {
+        const response = await apiFetch("/api/v1/forecasts/dashboard-cards?domain=Sales", {
           signal: controller.signal
         });
         const payload = await response.json();

@@ -27,7 +27,16 @@ async function fetchBiasRows(level, windowMonths, db) {
     `
       WITH latest_actual_month AS (
         SELECT MAX(month) AS max_month
-        FROM monthly_sales_data
+        FROM monthly_sales_data m
+        JOIN dealers d ON d.dealer_id = m.dealer_id
+        JOIN vehicle_models vm ON vm.model_id = m.model_id
+        JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+          AND vv.model_id = m.model_id
+        WHERE d.is_active = TRUE
+          AND vm.is_active = TRUE
+          AND vm.is_discontinued = FALSE
+          AND vv.is_active = TRUE
+          AND vv.is_discontinued = FALSE
       ),
       actuals AS (
         SELECT
@@ -36,8 +45,16 @@ async function fetchBiasRows(level, windowMonths, db) {
           SUM(m.units_sold)::NUMERIC AS actual_units
         FROM monthly_sales_data m
         JOIN dealers d ON d.dealer_id = m.dealer_id
+        JOIN vehicle_models vm ON vm.model_id = m.model_id
+        JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+          AND vv.model_id = m.model_id
         CROSS JOIN latest_actual_month lam
         WHERE lam.max_month IS NOT NULL
+          AND d.is_active = TRUE
+          AND vm.is_active = TRUE
+          AND vm.is_discontinued = FALSE
+          AND vv.is_active = TRUE
+          AND vv.is_discontinued = FALSE
           AND m.month >= lam.max_month - (($1::INTEGER - 1) * INTERVAL '1 month')
           AND m.month <= lam.max_month
         GROUP BY ${groupExpression}, m.month

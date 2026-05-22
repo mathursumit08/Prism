@@ -374,11 +374,12 @@ const forecastEventSchema = {
   type: "object",
   properties: {
     eventId: { type: "integer" },
+    forecastDomain: { enum: ["Sales", "Parts", "Service"], type: "string" },
     forecastType: { type: "string" },
     eventCode: { type: "string" },
     eventName: { type: "string" },
     eventType: { enum: ["Festive", "Regulatory", "Promotional", "Holiday", "Other"], type: "string" },
-    scope: { enum: ["National", "Zone", "State"], type: "string" },
+    scope: { enum: ["National", "Zone", "State", "Service Center"], type: "string" },
     scopeValue: { nullable: true, type: "string" },
     startDate: { format: "date", type: "string" },
     endDate: { format: "date", type: "string" },
@@ -391,12 +392,13 @@ const forecastEventSchema = {
 
 const forecastEventRequestSchema = {
   type: "object",
-  required: ["event_code", "event_name", "event_type", "scope", "start_date", "end_date", "uplift_pct"],
+  required: ["forecast_domain", "event_code", "event_name", "event_type", "scope", "start_date", "end_date", "uplift_pct"],
   properties: {
+    forecast_domain: { enum: ["Sales", "Parts", "Service"], type: "string" },
     event_code: { type: "string" },
     event_name: { type: "string" },
     event_type: { enum: ["Festive", "Regulatory", "Promotional", "Holiday", "Other"], type: "string" },
-    scope: { enum: ["National", "Zone", "State"], type: "string" },
+    scope: { enum: ["National", "Zone", "State", "Service Center"], type: "string" },
     scope_value: { nullable: true, type: "string" },
     start_date: { format: "date", type: "string" },
     end_date: { format: "date", type: "string" },
@@ -946,7 +948,7 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
       "/api/v1/forecasts/admin/events": {
         get: {
           summary: "List forecast events",
-          description: "Returns configured sales-impacting event calendar entries.",
+          description: "Returns configured forecast event calendar entries for the forecast domains the user can manage.",
           tags: ["Forecasts"],
           security: [{ bearerAuth: [] }],
           responses: {
@@ -978,6 +980,7 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
           security: [{ bearerAuth: [] }],
           requestBody: buildJsonRequestBody(forecastEventRequestSchema, {
             event_code: "DIWALI_2026",
+            forecast_domain: "Sales",
             event_name: "Diwali",
             event_type: "Festive",
             scope: "National",

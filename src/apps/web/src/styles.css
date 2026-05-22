@@ -1403,6 +1403,20 @@ select:disabled {
   gap: 12px;
 }
 
+.dashboard-card-group + .dashboard-card-group {
+  padding-top: 22px;
+  border-top: 1px solid #d1dce6;
+}
+
+.dashboard-card-domain-section {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard-card-domain-section .eyebrow {
+  margin-bottom: 0;
+}
+
 .dashboard-card-group h3 {
   margin: 0;
   color: #202020;

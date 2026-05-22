@@ -3,8 +3,10 @@ import { useAuth } from "../auth/AuthContext.jsx";
 import DismissibleMessage from "../components/DismissibleMessage.jsx";
 
 const eventTypes = ["Festive", "Regulatory", "Promotional", "Holiday", "Other"];
-const scopes = ["National", "Zone", "State"];
+const domains = ["Sales", "Parts", "Service"];
+const scopes = ["National", "Zone", "State", "Service Center"];
 const emptyForm = {
+  forecastDomain: "Sales",
   eventCode: "",
   eventName: "",
   eventType: "Festive",
@@ -30,6 +32,7 @@ function normalizeOption(value, options, fallback) {
 
 function toFormEvent(event) {
   return {
+    forecastDomain: normalizeOption(event.forecastDomain, domains, "Sales"),
     eventCode: event.eventCode || "",
     eventName: event.eventName || "",
     eventType: normalizeOption(event.eventType, eventTypes, "Festive"),
@@ -46,6 +49,7 @@ function toApiEvent(form) {
   // The API accepts snake_case fields because the payload maps directly onto the
   // forecast_event_calendar table columns.
   return {
+    forecast_domain: form.forecastDomain,
     event_code: form.eventCode,
     event_name: form.eventName,
     event_type: form.eventType,
@@ -59,7 +63,7 @@ function toApiEvent(form) {
 }
 
 export default function ForecastEventsPage() {
-  const { apiFetch } = useAuth();
+  const { apiFetch, user } = useAuth();
   const [eventsState, setEventsState] = useState({
     loading: true,
     error: "",
@@ -74,11 +78,40 @@ export default function ForecastEventsPage() {
   });
 
   const isEditing = editingEventId !== null;
+  const allowedDomains = useMemo(() => {
+    const permissions = user?.permissions || [];
+    return domains.filter((domain) => {
+      if (domain === "Sales") return permissions.includes("Manage Forecast");
+      if (domain === "Parts") return permissions.includes("Manage Parts Forecast");
+      return permissions.includes("Manage Service Forecast");
+    });
+  }, [user?.permissions]);
+  const scopeOptions = form.forecastDomain === "Sales" ? scopes.filter((scope) => scope !== "Service Center") : scopes;
   const sortedEvents = useMemo(() => eventsState.events, [eventsState.events]);
 
   useEffect(() => {
     loadEvents();
   }, []);
+
+  useEffect(() => {
+    if (allowedDomains.length === 0) {
+      return;
+    }
+
+    setForm((current) => {
+      if (allowedDomains.includes(current.forecastDomain)) {
+        return current;
+      }
+
+      return {
+        ...current,
+        forecastDomain: allowedDomains[0],
+        ...(allowedDomains[0] === "Sales" && current.scope === "Service Center"
+          ? { scope: "National", scopeValue: "" }
+          : {})
+      };
+    });
+  }, [allowedDomains]);
 
   async function loadEvents() {
     setEventsState((current) => ({
@@ -113,13 +146,19 @@ export default function ForecastEventsPage() {
     setForm((current) => ({
       ...current,
       [field]: value,
-      ...(field === "scope" && value === "National" ? { scopeValue: "" } : {})
+      ...(field === "scope" && value === "National" ? { scopeValue: "" } : {}),
+      ...(field === "forecastDomain" && value === "Sales" && current.scope === "Service Center"
+        ? { scope: "National", scopeValue: "" }
+        : {})
     }));
   }
 
   function resetForm() {
     setEditingEventId(null);
-    setForm(emptyForm);
+    setForm({
+      ...emptyForm,
+      forecastDomain: allowedDomains[0] || "Sales"
+    });
   }
 
   function editEvent(event) {
@@ -222,7 +261,7 @@ export default function ForecastEventsPage() {
           <p className="eyebrow">Forecast Events</p>
           <h1>Maintain demand-impacting events.</h1>
           <p className="admin-header-copy">
-            Configure dated Festive, Regulatory, Promotional, Holiday, and Other uplift rules by National, Zone, or State scope.
+            Configure dated uplift rules for Sales, Parts, and Service forecasts by National, Zone, State, or Service Center scope.
           </p>
         </div>
         <div className="admin-hero-card">
@@ -259,6 +298,20 @@ export default function ForecastEventsPage() {
 
           <div className="event-form-grid">
             <label>
+              Domain
+              <select
+                value={form.forecastDomain}
+                onChange={(event) => updateField("forecastDomain", event.target.value)}
+                disabled={isEditing && allowedDomains.length === 1}
+              >
+                {allowedDomains.map((domain) => (
+                  <option key={domain} value={domain}>
+                    {domain}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               Event code
               <input
                 value={form.eventCode}
@@ -289,7 +342,7 @@ export default function ForecastEventsPage() {
             <label>
               Scope
               <select value={form.scope} onChange={(event) => updateField("scope", event.target.value)}>
-                {scopes.map((scope) => (
+                {scopeOptions.map((scope) => (
                   <option key={scope} value={scope}>
                     {scope}
                   </option>
@@ -301,7 +354,15 @@ export default function ForecastEventsPage() {
               <input
                 value={form.scopeValue}
                 onChange={(event) => updateField("scopeValue", event.target.value)}
-                placeholder={form.scope === "Zone" ? "North" : form.scope === "State" ? "Maharashtra" : "Not required"}
+                placeholder={
+                  form.scope === "Zone"
+                    ? "North"
+                    : form.scope === "State"
+                      ? "Maharashtra"
+                      : form.scope === "Service Center"
+                        ? "SVC001"
+                        : "Not required"
+                }
                 disabled={form.scope === "National"}
                 required={form.scope !== "National"}
               />
@@ -375,6 +436,7 @@ export default function ForecastEventsPage() {
               <thead>
                 <tr>
                   <th>Event</th>
+                  <th>Domain</th>
                   <th className="event-code-column">Event code</th>
                   <th>Type</th>
                   <th>Scope</th>
@@ -391,6 +453,7 @@ export default function ForecastEventsPage() {
                       <th>
                         <strong>{event.eventName}</strong>
                       </th>
+                      <td>{normalizeOption(event.forecastDomain, domains, event.forecastDomain)}</td>
                       <td className="event-code-column">{event.eventCode}</td>
                       <td>{normalizeOption(event.eventType, eventTypes, event.eventType)}</td>
                       <td>
@@ -416,7 +479,7 @@ export default function ForecastEventsPage() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="8">No forecast events are configured.</td>
+                    <td colSpan="9">No forecast events are configured.</td>
                   </tr>
                 )}
               </tbody>

@@ -190,8 +190,17 @@ function CalibrationCoverageChart({ runs }) {
   );
 }
 
-export default function ManageForecastPage() {
+export default function ManageForecastPage({
+  domain = "sales",
+  title = "Manage the forecast pipeline without leaving Prism.",
+  eyebrow = "Forecast Administration",
+  description = "Review run health, clear future output, and launch a new forecast regeneration with live progress.",
+  regenerateLabel = "Regenerate forecast",
+  clearLabel = "Clear future forecast rows"
+}) {
   const { apiFetch } = useAuth();
+  const adminBasePath = domain === "sales" ? "/api/v1/forecasts/admin" : `/api/v1/forecasts/admin/${domain}`;
+  const isSalesForecast = domain === "sales";
   const [selectedHorizon, setSelectedHorizon] = useState(6);
   const [adminState, setAdminState] = useState({
     loading: true,
@@ -215,7 +224,7 @@ export default function ManageForecastPage() {
 
     async function loadStatus() {
       try {
-        const response = await apiFetch("/api/v1/forecasts/admin/status");
+        const response = await apiFetch(`${adminBasePath}/status`);
         const payload = await response.json();
 
         if (!response.ok) {
@@ -251,13 +260,22 @@ export default function ManageForecastPage() {
       isMounted = false;
       window.clearInterval(intervalId);
     };
-  }, [adminState.data?.generation?.running, apiFetch]);
+  }, [adminBasePath, adminState.data?.generation?.running, apiFetch]);
 
   useEffect(() => {
     const controller = new AbortController();
 
     async function loadCalibrationHistory() {
       try {
+        if (!isSalesForecast) {
+          setCalibrationHistoryState({
+            loading: false,
+            error: "",
+            runs: []
+          });
+          return;
+        }
+
         const response = await apiFetch("/api/v1/forecasts/admin/calibration-history?limit=12", {
           signal: controller.signal
         });
@@ -288,7 +306,7 @@ export default function ManageForecastPage() {
     loadCalibrationHistory();
 
     return () => controller.abort();
-  }, [apiFetch, adminState.data?.lastSuccessfulRun?.runId]);
+  }, [apiFetch, adminState.data?.lastSuccessfulRun?.runId, isSalesForecast]);
 
   async function refreshStatus() {
     setAdminState((current) => ({
@@ -298,7 +316,7 @@ export default function ManageForecastPage() {
     }));
 
     try {
-      const response = await apiFetch("/api/v1/forecasts/admin/status");
+      const response = await apiFetch(`${adminBasePath}/status`);
       const payload = await response.json();
 
       if (!response.ok) {
@@ -334,7 +352,7 @@ export default function ManageForecastPage() {
     });
 
     try {
-      const response = await apiFetch("/api/v1/forecasts/admin/clear", {
+      const response = await apiFetch(`${adminBasePath}/clear`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -373,7 +391,7 @@ export default function ManageForecastPage() {
     });
 
     try {
-      const response = await apiFetch("/api/v1/forecasts/admin/regenerate", {
+      const response = await apiFetch(`${adminBasePath}/regenerate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -424,10 +442,10 @@ export default function ManageForecastPage() {
     <>
       <section className="dashboard-header">
         <div>
-          <p className="eyebrow">Forecast Administration</p>
-          <h1>Manage the forecast pipeline without leaving Prism.</h1>
+          <p className="eyebrow">{eyebrow}</p>
+          <h1>{title}</h1>
           <p className="admin-header-copy">
-            Review run health, clear future output, and launch a new forecast regeneration with live progress.
+            {description}
           </p>
         </div>
         <div className="admin-hero-card">
@@ -483,7 +501,7 @@ export default function ManageForecastPage() {
           </label>
 
           <button type="button" onClick={handleRegenerate} disabled={generation?.running || actionState.loading}>
-            Regenerate forecast
+            {regenerateLabel}
           </button>
 
           <button type="button" className="secondary-button" onClick={refreshStatus} disabled={actionState.loading}>
@@ -491,7 +509,7 @@ export default function ManageForecastPage() {
           </button>
 
           <button type="button" className="danger-button" onClick={handleClear} disabled={generation?.running || actionState.loading}>
-            Clear future forecast rows
+            {clearLabel}
           </button>
         </div>
       </section>
@@ -519,7 +537,7 @@ export default function ManageForecastPage() {
         <article className="metric">
           <span>Interval calibration</span>
           <strong>{calibration ? formatPercent(calibration.coverage80) : "No data"}</strong>
-          <p>80% empirical coverage on rolling hold-out.</p>
+          <p>{isSalesForecast ? "80% empirical coverage on rolling hold-out." : "Coverage metrics are not calibrated for this forecast stream yet."}</p>
         </article>
       </section>
 
@@ -641,10 +659,15 @@ export default function ManageForecastPage() {
               </div>
             </>
           ) : (
-            <p className="notice compact-notice">Calibration metrics will appear after the next completed forecast run.</p>
+            <p className="notice compact-notice">
+              {isSalesForecast
+                ? "Calibration metrics will appear after the next completed forecast run."
+                : "Parts and service forecast runs store health and output counts; interval calibration will be added after domain-specific backtesting is enabled."}
+            </p>
           )}
         </article>
 
+        {isSalesForecast && (
         <article className="analytics-panel">
           <div className="panel-heading compact">
             <div>
@@ -655,7 +678,9 @@ export default function ManageForecastPage() {
           {calibrationHistoryState.error && <p className="notice compact-notice">{calibrationHistoryState.error}</p>}
           <CalibrationCoverageChart runs={calibrationHistoryState.runs} />
         </article>
+        )}
 
+        {isSalesForecast && (
         <article className="analytics-panel">
           <div className="panel-heading compact">
             <div>
@@ -680,6 +705,7 @@ export default function ManageForecastPage() {
             )}
           </div>
         </article>
+        )}
 
         <article className="analytics-panel">
           <div className="panel-heading compact">

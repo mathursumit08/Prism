@@ -1,7 +1,8 @@
 import { pool } from "../../db.js";
 
 export const eventTypes = ["Festive", "Regulatory", "Promotional", "Holiday", "Other"];
-export const eventScopes = ["National", "Zone", "State"];
+export const eventDomains = ["Sales", "Parts", "Service"];
+export const eventScopes = ["National", "Zone", "State", "Service Center"];
 
 function buildValidationError(message) {
   const error = new Error(message);
@@ -56,9 +57,17 @@ function normalizeOption(value, fieldName, options, { maxLength }) {
   return matchingOption;
 }
 
+function normalizeDomain(value) {
+  return normalizeOption(value ?? "Sales", "forecast_domain", eventDomains, { maxLength: 20 });
+}
+
 function normalizeEventPayload(payload, { partial = false } = {}) {
   const normalized = {};
   const hasField = (field) => Object.prototype.hasOwnProperty.call(payload, field);
+
+  if (!partial || hasField("forecast_domain") || hasField("domain")) {
+    normalized.forecast_domain = normalizeDomain(payload.forecast_domain ?? payload.domain ?? "Sales");
+  }
 
   if (!partial || hasField("forecast_type")) {
     normalized.forecast_type = normalizeText(payload.forecast_type ?? "baseline", "forecast_type", {
@@ -83,13 +92,13 @@ function normalizeEventPayload(payload, { partial = false } = {}) {
   }
 
   if (!partial || hasField("scope")) {
-    normalized.scope = normalizeOption(payload.scope ?? "National", "scope", eventScopes, { maxLength: 10 });
+    normalized.scope = normalizeOption(payload.scope ?? "National", "scope", eventScopes, { maxLength: 20 });
   }
 
   if (!partial || hasField("scope_value") || hasField("scope")) {
-    const scope = normalized.scope ?? normalizeOption(payload.scope, "scope", eventScopes, { maxLength: 10 });
-    // National events intentionally clear scope_value; Zone and State events must
-    // keep a value so the worker can match them to dealer metadata.
+    const scope = normalized.scope ?? normalizeOption(payload.scope, "scope", eventScopes, { maxLength: 20 });
+    // National events intentionally clear scope_value; other scopes keep a value
+    // so the worker can match them to dealer or service-center metadata.
     normalized.scope_value =
       scope === "National"
         ? null
@@ -147,11 +156,12 @@ export const ForecastEventCalendar = {
   /**
    * Returns active dated event-uplift rules for the requested forecast type.
    */
-  async findActive({ forecastType = "baseline" } = {}, db = pool) {
+  async findActive({ forecastDomain = "Sales", forecastType = "baseline" } = {}, db = pool) {
     const result = await db.query(
       `
         SELECT
           event_id,
+          forecast_domain,
           forecast_type,
           event_code,
           event_name,
@@ -163,21 +173,37 @@ export const ForecastEventCalendar = {
           uplift_pct,
           is_active
         FROM forecast_event_calendar
-        WHERE forecast_type = $1
+        WHERE forecast_domain = $1
+          AND forecast_type = $2
           AND is_active = TRUE
         ORDER BY start_date, end_date, event_name
       `,
-      [forecastType]
+      [normalizeDomain(forecastDomain), forecastType]
     );
 
     return result.rows;
   },
 
-  async findAll({ forecastType = "baseline" } = {}, db = pool) {
+  async findAll({ forecastDomain = null, forecastType = null } = {}, db = pool) {
+    const values = [];
+    const conditions = [];
+
+    if (forecastDomain) {
+      values.push(normalizeDomain(forecastDomain));
+      conditions.push(`forecast_domain = $${values.length}`);
+    }
+
+    if (forecastType) {
+      values.push(forecastType);
+      conditions.push(`forecast_type = $${values.length}`);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const result = await db.query(
       `
         SELECT
           event_id,
+          forecast_domain,
           forecast_type,
           event_code,
           event_name,
@@ -191,13 +217,40 @@ export const ForecastEventCalendar = {
           created_at,
           updated_at
         FROM forecast_event_calendar
-        WHERE forecast_type = $1
-        ORDER BY start_date DESC, event_name
+        ${where}
+        ORDER BY forecast_domain, start_date DESC, event_name
       `,
-      [forecastType]
+      values
     );
 
     return result.rows;
+  },
+
+  async findById(eventId, db = pool) {
+    const result = await db.query(
+      `
+        SELECT
+          event_id,
+          forecast_domain,
+          forecast_type,
+          event_code,
+          event_name,
+          event_type,
+          scope,
+          scope_value,
+          TO_CHAR(start_date, 'YYYY-MM-DD') AS start_date,
+          TO_CHAR(end_date, 'YYYY-MM-DD') AS end_date,
+          uplift_pct,
+          is_active,
+          created_at,
+          updated_at
+        FROM forecast_event_calendar
+        WHERE event_id = $1
+      `,
+      [eventId]
+    );
+
+    return result.rows[0] ?? null;
   },
 
   async insert(payload, db = pool) {
@@ -205,6 +258,7 @@ export const ForecastEventCalendar = {
     const result = await db.query(
       `
         INSERT INTO forecast_event_calendar (
+          forecast_domain,
           forecast_type,
           event_code,
           event_name,
@@ -216,9 +270,10 @@ export const ForecastEventCalendar = {
           uplift_pct,
           is_active
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::DATE, $8::DATE, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::DATE, $9::DATE, $10, $11)
         RETURNING
           event_id,
+          forecast_domain,
           forecast_type,
           event_code,
           event_name,
@@ -233,6 +288,7 @@ export const ForecastEventCalendar = {
           updated_at
       `,
       [
+        event.forecast_domain,
         event.forecast_type,
         event.event_code,
         event.event_name,
@@ -260,6 +316,7 @@ export const ForecastEventCalendar = {
     }
 
     const merged = {
+      forecast_domain: existing.forecast_domain ?? "Sales",
       forecast_type: existing.forecast_type,
       event_code: existing.event_code,
       event_name: existing.event_name,
@@ -277,20 +334,22 @@ export const ForecastEventCalendar = {
       `
         UPDATE forecast_event_calendar
         SET
-          forecast_type = $2,
-          event_code = $3,
-          event_name = $4,
-          event_type = $5,
-          scope = $6,
-          scope_value = $7,
-          start_date = $8::DATE,
-          end_date = $9::DATE,
-          uplift_pct = $10,
-          is_active = $11,
+          forecast_domain = $2,
+          forecast_type = $3,
+          event_code = $4,
+          event_name = $5,
+          event_type = $6,
+          scope = $7,
+          scope_value = $8,
+          start_date = $9::DATE,
+          end_date = $10::DATE,
+          uplift_pct = $11,
+          is_active = $12,
           updated_at = NOW()
         WHERE event_id = $1
         RETURNING
           event_id,
+          forecast_domain,
           forecast_type,
           event_code,
           event_name,
@@ -306,6 +365,7 @@ export const ForecastEventCalendar = {
       `,
       [
         eventId,
+        event.forecast_domain,
         event.forecast_type,
         event.event_code,
         event.event_name,

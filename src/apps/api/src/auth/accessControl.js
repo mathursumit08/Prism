@@ -2,54 +2,158 @@ import { pool } from "../db.js";
 
 export const permissions = {
   viewForecast: "View Forecast",
-  manageForecast: "Manage Forecast"
+  manageForecast: "Manage Forecast",
+  viewPartsForecast: "View Parts Forecast",
+  managePartsForecast: "Manage Parts Forecast",
+  viewServiceForecast: "View Service Forecast",
+  manageServiceForecast: "Manage Service Forecast"
 };
+
+const domains = ["Sales", "Parts", "Service"];
+
+export function normalizeAccessDomain(domain = "Sales") {
+  const normalized = String(domain || "").trim().toLowerCase();
+  if (normalized === "parts") return "Parts";
+  if (normalized === "service") return "Service";
+  return "Sales";
+}
+
+function normalizeScopeType(type) {
+  const normalized = String(type || "").trim().toLowerCase().replace(/\s+/g, "_");
+  if (normalized === "service_center") return "Service Center";
+  if (normalized === "dealer") return "Dealer";
+  if (normalized === "region") return "Region";
+  if (normalized === "national") return "National";
+  return type;
+}
+
+function normalizeScope(row) {
+  return {
+    domain: normalizeAccessDomain(row.domain),
+    type: normalizeScopeType(row.scope_type || row.type),
+    value: row.scope_value ?? row.value ?? null
+  };
+}
+
+function scopesForDomain(profile, domain) {
+  const accessDomain = normalizeAccessDomain(domain);
+  return (profile.accessScopes || []).filter((scope) => scope.domain === accessDomain);
+}
+
+function hasPermission(profile, permission) {
+  return (profile.permissions || []).includes(permission);
+}
+
+function hasNationalScope(scopes) {
+  return scopes.some((scope) => scope.type === "National");
+}
+
+function valuesForType(scopes, type) {
+  return [...new Set(scopes.filter((scope) => scope.type === type && scope.value).map((scope) => scope.value))];
+}
+
+function firstValueForType(scopes, type) {
+  return valuesForType(scopes, type)[0] || null;
+}
+
+function inferForecastLevels(profile) {
+  if (!hasPermission(profile, permissions.viewForecast)) {
+    return [];
+  }
+
+  const salesScopes = scopesForDomain(profile, "Sales");
+  if (salesScopes.length === 0) {
+    return [];
+  }
+
+  if (hasNationalScope(salesScopes) || salesScopes.some((scope) => scope.type === "Region")) {
+    return ["zone", "state", "dealer"];
+  }
+
+  if (salesScopes.some((scope) => scope.type === "Dealer")) {
+    return ["dealer"];
+  }
+
+  return ["zone", "state", "dealer"];
+}
 
 export function buildUserProfile(user) {
   const grantedPermissions = (user.permissions || []).filter(Boolean);
   const role = user.role_name || "";
-  const canViewForecast = grantedPermissions.includes(permissions.viewForecast);
-  const canManageForecast = grantedPermissions.includes(permissions.manageForecast);
-  const forecastLevels =
-    role === "Dealer Manager" || role === "Dealer Head"
-      ? ["dealer"]
-      : canViewForecast
-        ? ["zone", "state", "dealer"]
-        : [];
-
-  return {
+  const accessScopes = (user.access_scopes || []).map(normalizeScope);
+  const profile = {
     username: user.username,
     name: user.employee_name,
     role,
     jobTitle: user.job_title,
     permissions: grantedPermissions,
-    region: user.region,
-    dealerId: user.dealer_id,
+    accessScopes,
     isActive: user.is_active,
-    lastLogoutAt: user.last_logout_at,
-    forecastLevels
+    lastLogoutAt: user.last_logout_at
+  };
+
+  return {
+    ...profile,
+    region: firstValueForType(accessScopes, "Region"),
+    dealerId: firstValueForType(scopesForDomain(profile, "Sales"), "Dealer"),
+    serviceCenterId:
+      firstValueForType(scopesForDomain(profile, "Parts"), "Service Center") ||
+      firstValueForType(scopesForDomain(profile, "Service"), "Service Center"),
+    forecastLevels: inferForecastLevels(profile)
   };
 }
 
-export function getScope(profile) {
-  // Scopes are data filters, not UI permissions. They are reused by query
-  // services to keep regional and dealer users inside their assigned territory.
-  if (profile.role === "Regional Head") {
+export function getScopesForDomain(profile, domain = "Sales") {
+  const scopes = scopesForDomain(profile, domain);
+  if (scopes.length > 0) {
+    return scopes;
+  }
+
+  return [];
+}
+
+export function getScope(profile, domain = "Sales") {
+  const accessDomain = normalizeAccessDomain(domain);
+  const scopes = getScopesForDomain(profile, accessDomain);
+  if (scopes.length === 0) {
     return {
-      kind: "region",
-      region: profile.region
+      kind: "none",
+      domain: accessDomain,
+      scopes
     };
   }
 
-  if (profile.role === "Dealer Manager" || profile.role === "Dealer Head") {
+  if (hasNationalScope(scopes)) {
     return {
-      kind: "dealer",
-      dealerId: profile.dealerId
+      kind: "all",
+      domain: accessDomain,
+      scopes
     };
+  }
+
+  const regionValues = valuesForType(scopes, "Region");
+  const dealerValues = valuesForType(scopes, "Dealer");
+  const serviceCenterValues = valuesForType(scopes, "Service Center");
+
+  if (scopes.length === 1 && regionValues.length === 1) {
+    return { kind: "Region", domain: accessDomain, region: regionValues[0], scopes };
+  }
+
+  if (scopes.length === 1 && dealerValues.length === 1) {
+    return { kind: "Dealer", domain: accessDomain, dealerId: dealerValues[0], scopes };
+  }
+
+  if (scopes.length === 1 && serviceCenterValues.length === 1) {
+    return { kind: "Service Center", domain: accessDomain, serviceCenterId: serviceCenterValues[0], scopes };
   }
 
   return {
-    kind: "all"
+    kind: "multi",
+    domain: accessDomain,
+    scopes,
+    regions: regionValues,
+    dealerIds: dealerValues,
+    serviceCenterIds: serviceCenterValues
   };
 }
 
@@ -61,52 +165,85 @@ export function canAccessForecastLevel(profile, level) {
   return profile.forecastLevels.includes(level);
 }
 
+function scopeAllowsZone(scope, groupId) {
+  return scope.type === "National" || (scope.type === "Region" && scope.value === groupId);
+}
+
+async function scopeAllowsState(scope, state) {
+  if (scope.type === "National") return true;
+  if (scope.type === "Region") {
+    const result = await pool.query(
+      `
+        SELECT 1
+        FROM dealers
+        WHERE state = $1
+          AND region = $2
+          AND is_active = TRUE
+        LIMIT 1
+      `,
+      [state, scope.value]
+    );
+    return result.rowCount > 0;
+  }
+  if (scope.type === "Dealer") {
+    const result = await pool.query(
+      `
+        SELECT 1
+        FROM dealers
+        WHERE dealer_id = $1
+          AND state = $2
+          AND is_active = TRUE
+        LIMIT 1
+      `,
+      [scope.value, state]
+    );
+    return result.rowCount > 0;
+  }
+  return false;
+}
+
+async function scopeAllowsDealer(scope, dealerId) {
+  if (scope.type === "National") return true;
+  if (scope.type === "Dealer") return scope.value === dealerId;
+  if (scope.type === "Region") {
+    const result = await pool.query(
+      `
+        SELECT 1
+        FROM dealers
+        WHERE dealer_id = $1
+          AND region = $2
+          AND is_active = TRUE
+        LIMIT 1
+      `,
+      [dealerId, scope.value]
+    );
+    return result.rowCount > 0;
+  }
+  return false;
+}
+
 export async function isGroupAllowed(profile, level, groupId) {
-  // Group-level checks validate requested dropdown filters before the heavier
-  // forecast queries run.
   if (!groupId) {
     return true;
   }
 
-  if (profile.role === "Regional Head") {
-    if (level === "zone") {
-      return groupId === profile.region;
-    }
-
-    if (level === "state") {
-      const result = await pool.query(
-        `
-          SELECT 1
-          FROM dealers
-          WHERE state = $1
-            AND region = $2
-          LIMIT 1
-        `,
-        [groupId, profile.region]
-      );
-
-      return result.rowCount > 0;
-    }
-
-    if (level === "dealer") {
-      const result = await pool.query(
-        `
-          SELECT 1
-          FROM dealers
-          WHERE dealer_id = $1
-            AND region = $2
-          LIMIT 1
-        `,
-        [groupId, profile.region]
-      );
-
-      return result.rowCount > 0;
-    }
+  const salesScopes = getScopesForDomain(profile, "Sales");
+  if (salesScopes.length === 0) {
+    return false;
   }
 
-  if (profile.role === "Dealer Manager" || profile.role === "Dealer Head") {
-    return level === "dealer" && groupId === profile.dealerId;
+  for (const scope of salesScopes) {
+    if (level === "zone" && scopeAllowsZone(scope, groupId)) return true;
+    if (level === "state" && (await scopeAllowsState(scope, groupId))) return true;
+    if (level === "dealer" && (await scopeAllowsDealer(scope, groupId))) return true;
   }
 
-  return true;
+  return false;
+}
+
+export function domainForPermission(permission) {
+  if (permission === permissions.viewForecast || permission === permissions.manageForecast) return "Sales";
+  if (permission === permissions.viewPartsForecast || permission === permissions.managePartsForecast) return "Parts";
+  if (permission === permissions.viewServiceForecast || permission === permissions.manageServiceForecast) return "Service";
+  return domains[0];
 }

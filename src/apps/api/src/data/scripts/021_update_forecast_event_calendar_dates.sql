@@ -4,7 +4,7 @@ ALTER TABLE forecast_event_calendar
   ADD COLUMN IF NOT EXISTS start_date DATE,
   ADD COLUMN IF NOT EXISTS end_date DATE,
   ADD COLUMN IF NOT EXISTS event_type VARCHAR(20) NOT NULL DEFAULT 'Festive',
-  ADD COLUMN IF NOT EXISTS scope VARCHAR(10) NOT NULL DEFAULT 'National',
+  ADD COLUMN IF NOT EXISTS scope VARCHAR(20) NOT NULL DEFAULT 'National',
   ADD COLUMN IF NOT EXISTS scope_value VARCHAR(120);
 
 UPDATE forecast_event_calendar
@@ -56,11 +56,11 @@ ALTER TABLE forecast_event_calendar
 ALTER TABLE forecast_event_calendar
   ADD CONSTRAINT forecast_event_calendar_uplift_pct_check CHECK (uplift_pct BETWEEN -100 AND 200),
   ADD CONSTRAINT forecast_event_calendar_event_type_check CHECK (event_type IN ('Festive', 'Regulatory', 'Promotional', 'Holiday', 'Other')),
-  ADD CONSTRAINT forecast_event_calendar_scope_check CHECK (scope IN ('National', 'Zone', 'State')),
+  ADD CONSTRAINT forecast_event_calendar_scope_check CHECK (scope IN ('National', 'Zone', 'State', 'Service Center')),
   ADD CONSTRAINT forecast_event_calendar_date_range_check CHECK (end_date >= start_date),
   ADD CONSTRAINT forecast_event_calendar_scope_value_check CHECK (
     (scope = 'National' AND scope_value IS NULL)
-    OR (scope IN ('Zone', 'State') AND scope_value IS NOT NULL AND LENGTH(TRIM(scope_value)) > 0)
+    OR (scope <> 'National' AND scope_value IS NOT NULL AND LENGTH(TRIM(scope_value)) > 0)
   );
 
 ALTER TABLE forecast_event_calendar

@@ -4,14 +4,14 @@ export const ForecastRun = {
   /**
    * Creates a running forecast-run audit record before generation starts.
    */
-  async create({ forecastType = "baseline", horizonMonths }, db = pool) {
+  async create({ forecastDomain = "Sales", forecastType = "baseline", horizonMonths }, db = pool) {
     const result = await db.query(
       `
-        INSERT INTO forecast_runs (forecast_type, horizon_months, started_at)
-        VALUES ($1, $2, clock_timestamp())
+        INSERT INTO forecast_runs (forecast_domain, forecast_type, horizon_months, started_at)
+        VALUES ($1, $2, $3, clock_timestamp())
         RETURNING *
       `,
-      [forecastType, horizonMonths]
+      [forecastDomain, forecastType, horizonMonths]
     );
 
     return result.rows[0];
@@ -71,17 +71,18 @@ export const ForecastRun = {
   /**
    * Returns the newest successful run for the requested forecast type.
    */
-  async findLatestCompleted({ forecastType = "baseline" } = {}, db = pool) {
+  async findLatestCompleted({ forecastDomain = "Sales", forecastType = "baseline" } = {}, db = pool) {
     const result = await db.query(
       `
         SELECT *
         FROM forecast_runs
-        WHERE forecast_type = $1
+        WHERE forecast_domain = $1
+          AND forecast_type = $2
           AND status = 'completed'
         ORDER BY completed_at DESC
         LIMIT 1
       `,
-      [forecastType]
+      [forecastDomain, forecastType]
     );
 
     return result.rows[0] ?? null;
@@ -90,16 +91,17 @@ export const ForecastRun = {
   /**
    * Returns the newest run regardless of status for the requested forecast type.
    */
-  async findLatest({ forecastType = "baseline" } = {}, db = pool) {
+  async findLatest({ forecastDomain = "Sales", forecastType = "baseline" } = {}, db = pool) {
     const result = await db.query(
       `
         SELECT *
         FROM forecast_runs
-        WHERE forecast_type = $1
+        WHERE forecast_domain = $1
+          AND forecast_type = $2
         ORDER BY started_at DESC
         LIMIT 1
       `,
-      [forecastType]
+      [forecastDomain, forecastType]
     );
 
     return result.rows[0] ?? null;
@@ -108,17 +110,18 @@ export const ForecastRun = {
   /**
    * Returns the newest failed run for the requested forecast type.
    */
-  async findLatestFailed({ forecastType = "baseline" } = {}, db = pool) {
+  async findLatestFailed({ forecastDomain = "Sales", forecastType = "baseline" } = {}, db = pool) {
     const result = await db.query(
       `
         SELECT *
         FROM forecast_runs
-        WHERE forecast_type = $1
+        WHERE forecast_domain = $1
+          AND forecast_type = $2
           AND status = 'failed'
         ORDER BY completed_at DESC NULLS LAST, started_at DESC
         LIMIT 1
       `,
-      [forecastType]
+      [forecastDomain, forecastType]
     );
 
     return result.rows[0] ?? null;

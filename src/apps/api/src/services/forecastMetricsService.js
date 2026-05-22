@@ -37,45 +37,63 @@ async function ensureMetricsAccess(user, level, groupId) {
 function appendScopeCondition(conditions, values, scope) {
   // Apply the same RBAC scope to metrics queries that the forecast data endpoints
   // use, so aggregate KPIs cannot leak another region or dealer.
+  if (scope?.kind === "none") {
+    conditions.push("FALSE");
+    return;
+  }
+
   if (!scope || scope.kind === "all") {
     return;
   }
 
-  if (scope.kind === "region") {
-    values.push(scope.region);
+  const regions = scope.kind === "Region" ? [scope.region] : (scope.regions || []);
+  const dealerIds = scope.kind === "Dealer" ? [scope.dealerId] : (scope.dealerIds || []);
+  const scopeChecks = [];
+
+  if (regions.length > 0) {
+    values.push(regions);
     const parameter = `$${values.length}`;
-    conditions.push(`
-      EXISTS (
-        SELECT 1
-        FROM dealers d_scope
-        WHERE (
+    scopeChecks.push(`
+      (
+        (
           fd.level = 'zone'
           AND d_scope.region = fd.group_id
-          AND d_scope.region = ${parameter}
+          AND d_scope.region = ANY(${parameter}::VARCHAR[])
+          AND d_scope.is_active = TRUE
         ) OR (
           fd.level = 'state'
           AND d_scope.state = fd.group_id
-          AND d_scope.region = ${parameter}
+          AND d_scope.region = ANY(${parameter}::VARCHAR[])
+          AND d_scope.is_active = TRUE
         ) OR (
           fd.level = 'dealer'
           AND d_scope.dealer_id = fd.group_id
-          AND d_scope.region = ${parameter}
+          AND d_scope.region = ANY(${parameter}::VARCHAR[])
+          AND d_scope.is_active = TRUE
         )
       )
     `);
-    return;
   }
 
-  if (scope.kind === "dealer") {
-    values.push(scope.dealerId);
+  if (dealerIds.length > 0) {
+    values.push(dealerIds);
     const parameter = `$${values.length}`;
-    conditions.push("fd.level = 'dealer'");
+    scopeChecks.push(`
+      (
+        fd.level = 'dealer'
+        AND d_scope.dealer_id = fd.group_id
+        AND d_scope.dealer_id = ANY(${parameter}::VARCHAR[])
+        AND d_scope.is_active = TRUE
+      )
+    `);
+  }
+
+  if (scopeChecks.length > 0) {
     conditions.push(`
       EXISTS (
         SELECT 1
         FROM dealers d_scope
-        WHERE d_scope.dealer_id = fd.group_id
-          AND d_scope.dealer_id = ${parameter}
+        WHERE ${scopeChecks.join(" OR ")}
       )
     `);
   }
@@ -135,7 +153,16 @@ export async function getForecastMetricsPayload(user, query, db = pool) {
     `
       WITH latest_actual_month AS (
         SELECT MAX(month) AS max_month
-        FROM monthly_sales_data
+        FROM monthly_sales_data m
+        JOIN dealers d ON d.dealer_id = m.dealer_id
+        JOIN vehicle_models vm ON vm.model_id = m.model_id
+        JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+          AND vv.model_id = m.model_id
+        WHERE d.is_active = TRUE
+          AND vm.is_active = TRUE
+          AND vm.is_discontinued = FALSE
+          AND vv.is_active = TRUE
+          AND vv.is_discontinued = FALSE
       ),
       actuals AS (
         SELECT
@@ -149,8 +176,15 @@ export async function getForecastMetricsPayload(user, query, db = pool) {
         FROM monthly_sales_data m
         JOIN dealers d ON d.dealer_id = m.dealer_id
         JOIN vehicle_models vm ON vm.model_id = m.model_id
+        JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+          AND vv.model_id = m.model_id
         CROSS JOIN latest_actual_month lam
         WHERE lam.max_month IS NOT NULL
+          AND d.is_active = TRUE
+          AND vm.is_active = TRUE
+          AND vm.is_discontinued = FALSE
+          AND vv.is_active = TRUE
+          AND vv.is_discontinued = FALSE
           AND m.month >= lam.max_month - (($1::INTEGER - 1) * INTERVAL '1 month')
           AND m.month <= lam.max_month
         GROUP BY d.dealer_id, m.month, 4, 5, 6
@@ -168,8 +202,15 @@ export async function getForecastMetricsPayload(user, query, db = pool) {
         FROM monthly_sales_data m
         JOIN dealers d ON d.dealer_id = m.dealer_id
         JOIN vehicle_models vm ON vm.model_id = m.model_id
+        JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+          AND vv.model_id = m.model_id
         CROSS JOIN latest_actual_month lam
         WHERE lam.max_month IS NOT NULL
+          AND d.is_active = TRUE
+          AND vm.is_active = TRUE
+          AND vm.is_discontinued = FALSE
+          AND vv.is_active = TRUE
+          AND vv.is_discontinued = FALSE
           AND m.month >= lam.max_month - (($1::INTEGER - 1) * INTERVAL '1 month')
           AND m.month <= lam.max_month
         GROUP BY d.state, m.month, 4, 5, 6
@@ -187,8 +228,15 @@ export async function getForecastMetricsPayload(user, query, db = pool) {
         FROM monthly_sales_data m
         JOIN dealers d ON d.dealer_id = m.dealer_id
         JOIN vehicle_models vm ON vm.model_id = m.model_id
+        JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+          AND vv.model_id = m.model_id
         CROSS JOIN latest_actual_month lam
         WHERE lam.max_month IS NOT NULL
+          AND d.is_active = TRUE
+          AND vm.is_active = TRUE
+          AND vm.is_discontinued = FALSE
+          AND vv.is_active = TRUE
+          AND vv.is_discontinued = FALSE
           AND m.month >= lam.max_month - (($1::INTEGER - 1) * INTERVAL '1 month')
           AND m.month <= lam.max_month
         GROUP BY d.region, m.month, 4, 5, 6

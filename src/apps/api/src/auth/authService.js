@@ -8,8 +8,6 @@ function buildUserQuery(whereClause) {
       u.username,
       u.employee_name,
       u.job_title,
-      u.dealer_id,
-      u.region,
       u.password_hash,
       u.is_active,
       u.last_login_at,
@@ -29,8 +27,6 @@ function buildUserQuery(whereClause) {
       u.username,
       u.employee_name,
       u.job_title,
-      u.dealer_id,
-      u.region,
       u.password_hash,
       u.is_active,
       u.last_login_at,
@@ -40,14 +36,70 @@ function buildUserQuery(whereClause) {
   `;
 }
 
+async function loadUserAccessScopes(username) {
+  try {
+    const result = await pool.query(
+      `
+        SELECT domain, scope_type, scope_value
+        FROM user_access_scopes
+        WHERE username = $1
+        ORDER BY domain, scope_type, scope_value
+      `,
+      [username]
+    );
+
+    return result.rows;
+  } catch (error) {
+    if (error.code !== "42P01") {
+      throw error;
+    }
+
+    const fallback = await pool.query(
+      `
+        SELECT u.username, u.dealer_id, u.service_center_id, u.region, r.role_name
+        FROM users u
+        LEFT JOIN roles r ON r.role_id = u.role_id
+        WHERE u.username = $1
+      `,
+      [username]
+    ).catch(() => ({ rows: [] }));
+    const legacyUser = fallback.rows[0];
+    if (!legacyUser) {
+      return [];
+    }
+
+    const scopes = [];
+    if (legacyUser.dealer_id) scopes.push({ domain: "Sales", scope_type: "Dealer", scope_value: legacyUser.dealer_id });
+    if (legacyUser.service_center_id) {
+      scopes.push({ domain: "Parts", scope_type: "Service Center", scope_value: legacyUser.service_center_id });
+      scopes.push({ domain: "Service", scope_type: "Service Center", scope_value: legacyUser.service_center_id });
+    }
+    if (legacyUser.region && legacyUser.role_name === "Regional Head") {
+      scopes.push({ domain: "Sales", scope_type: "Region", scope_value: legacyUser.region });
+      scopes.push({ domain: "Parts", scope_type: "Region", scope_value: legacyUser.region });
+      scopes.push({ domain: "Service", scope_type: "Region", scope_value: legacyUser.region });
+    }
+
+    return scopes;
+  }
+}
+
 export async function findUserForLogin(username) {
   const result = await pool.query(buildUserQuery("LOWER(u.username) = LOWER($1)"), [username]);
-  return result.rows[0] ?? null;
+  const user = result.rows[0] ?? null;
+  if (user) {
+    user.access_scopes = await loadUserAccessScopes(user.username);
+  }
+  return user;
 }
 
 export async function findUserByUsername(username) {
   const result = await pool.query(buildUserQuery("u.username = $1"), [username]);
-  return result.rows[0] ?? null;
+  const user = result.rows[0] ?? null;
+  if (user) {
+    user.access_scopes = await loadUserAccessScopes(user.username);
+  }
+  return user;
 }
 
 export async function getSessionUser(username) {

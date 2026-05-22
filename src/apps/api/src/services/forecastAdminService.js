@@ -1,36 +1,88 @@
-import { ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
+import { DomainForecastData, ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
 import { ForecastCacheService } from "./forecastCacheService.js";
-import { runForecastWorker } from "../workers/forecastWorker.js";
+import { runForecastWorker, runPartsForecastWorker, runServiceForecastWorker } from "../workers/forecastWorker.js";
 
 const FORECAST_TYPE = "baseline";
+const PARTS_FORECAST_TYPE = "demand";
+const SERVICE_FORECAST_TYPE = "order_volume";
 const DEFAULT_HORIZON_MONTHS = 6;
 const allowedHorizons = new Set([6, 12, 24]);
+const domainConfigs = {
+  sales: {
+    key: "sales",
+    domain: "Sales",
+    forecastType: FORECAST_TYPE,
+    label: "Sales",
+    run: runForecastWorker,
+    countRows: () => ForecastData.countByForecastType(FORECAST_TYPE),
+    clearRows: () => ForecastData.clearFutureByForecastType(FORECAST_TYPE)
+  },
+  parts: {
+    key: "parts",
+    domain: "Parts",
+    forecastType: PARTS_FORECAST_TYPE,
+    label: "Parts",
+    run: runPartsForecastWorker,
+    countRows: () => DomainForecastData.count("parts", PARTS_FORECAST_TYPE),
+    clearRows: () => DomainForecastData.clearFuture("parts", PARTS_FORECAST_TYPE)
+  },
+  service: {
+    key: "service",
+    domain: "Service",
+    forecastType: SERVICE_FORECAST_TYPE,
+    label: "Service",
+    run: runServiceForecastWorker,
+    countRows: () => DomainForecastData.count("service", SERVICE_FORECAST_TYPE),
+    clearRows: () => DomainForecastData.clearFuture("service", SERVICE_FORECAST_TYPE)
+  }
+};
 
 // This in-memory snapshot feeds the Manage Forecast screen while the worker is
 // running. Durable run history is still written to forecast_runs by the worker.
-const generationState = {
-  running: false,
-  stage: "idle",
-  stageLabel: "Idle",
-  message: "No forecast regeneration is active.",
-  horizon: null,
-  runId: null,
-  startedAt: null,
-  completedAt: null,
-  failedAt: null,
-  error: "",
-  processedScopes: 0,
-  totalScopes: 0,
-  inserted: 0,
-  removed: 0
-};
-
-function updateGenerationState(patch) {
-  Object.assign(generationState, patch);
+function createGenerationState() {
+  return {
+    running: false,
+    stage: "idle",
+    stageLabel: "Idle",
+    message: "No forecast regeneration is active.",
+    horizon: null,
+    runId: null,
+    startedAt: null,
+    completedAt: null,
+    failedAt: null,
+    error: "",
+    processedScopes: 0,
+    totalScopes: 0,
+    inserted: 0,
+    removed: 0
+  };
 }
 
-function resetGenerationState(horizon) {
-  updateGenerationState({
+const generationStates = Object.fromEntries(
+  Object.keys(domainConfigs).map((domain) => [domain, createGenerationState()])
+);
+
+function getDomainConfig(domain = "sales") {
+  const config = domainConfigs[String(domain || "sales").toLowerCase()];
+  if (!config) {
+    const error = new Error(`Unsupported forecast domain "${domain}"`);
+    error.code = "INVALID_DOMAIN";
+    throw error;
+  }
+
+  return config;
+}
+
+function getGenerationState(domain) {
+  return generationStates[String(domain || "sales").toLowerCase()] ?? generationStates.sales;
+}
+
+function updateGenerationState(domain, patch) {
+  Object.assign(getGenerationState(domain), patch);
+}
+
+function resetGenerationState(domain, horizon) {
+  updateGenerationState(domain, {
     running: true,
     stage: "initializing",
     stageLabel: "Initializing",
@@ -55,6 +107,7 @@ function normalizeRun(row) {
 
   return {
     runId: row.run_id,
+    forecastDomain: row.forecast_domain,
     forecastType: row.forecast_type,
     horizonMonths: row.horizon_months,
     status: row.status,
@@ -84,6 +137,7 @@ function normalizeCalibration(row) {
 function normalizeEvent(event) {
   return {
     eventId: event.event_id,
+    forecastDomain: event.forecast_domain,
     eventCode: event.event_code,
     eventName: event.event_name,
     eventType: event.event_type,
@@ -118,7 +172,8 @@ function filterUpcomingEvents(events, horizonMonths) {
   return events.filter((event) => event.end_date >= today && event.start_date <= horizonEnd);
 }
 
-function buildGenerationSnapshot() {
+function buildGenerationSnapshot(domain) {
+  const generationState = getGenerationState(domain);
   return {
     running: generationState.running,
     stage: generationState.stage,
@@ -143,27 +198,38 @@ export const ForecastAdminService = {
   },
 
   isGenerationRunning() {
-    return generationState.running;
+    return Object.values(generationStates).some((state) => state.running);
   },
 
   async getStatus() {
+    return this.getDomainStatus("sales");
+  },
+
+  async getDomainStatus(domain = "sales") {
+    const config = getDomainConfig(domain);
     const [lastSuccessfulRun, latestRun, lastFailedRun, storedForecastRows] = await Promise.all([
-      ForecastRun.findLatestCompleted({ forecastType: FORECAST_TYPE }),
-      ForecastRun.findLatest({ forecastType: FORECAST_TYPE }),
-      ForecastRun.findLatestFailed({ forecastType: FORECAST_TYPE }),
-      ForecastData.countByForecastType(FORECAST_TYPE)
+      ForecastRun.findLatestCompleted({ forecastDomain: config.domain, forecastType: config.forecastType }),
+      ForecastRun.findLatest({ forecastDomain: config.domain, forecastType: config.forecastType }),
+      ForecastRun.findLatestFailed({ forecastDomain: config.domain, forecastType: config.forecastType }),
+      config.countRows()
     ]);
+    const generationState = getGenerationState(domain);
     const horizonMonths =
       generationState.horizon || lastSuccessfulRun?.horizon_months || DEFAULT_HORIZON_MONTHS;
     const activeEvents = filterUpcomingEvents(
-      await ForecastEventCalendar.findActive({ forecastType: FORECAST_TYPE }),
+      await ForecastEventCalendar.findActive({
+        forecastDomain: config.domain,
+        forecastType: config.forecastType
+      }),
       horizonMonths
     );
 
     return {
-      forecastType: FORECAST_TYPE,
+      forecastDomain: config.domain,
+      forecastType: config.forecastType,
+      forecastLabel: config.label,
       allowedHorizons: this.getAllowedHorizons(),
-      generation: buildGenerationSnapshot(),
+      generation: buildGenerationSnapshot(domain),
       lastSuccessfulRun: normalizeRun(lastSuccessfulRun),
       latestRun: normalizeRun(latestRun),
       lastFailedRun: normalizeRun(lastFailedRun),
@@ -174,18 +240,29 @@ export const ForecastAdminService = {
   },
 
   async clearFutureForecastData() {
+    return this.clearFutureForecastDataForDomain("sales");
+  },
+
+  async clearFutureForecastDataForDomain(domain = "sales") {
+    const config = getDomainConfig(domain);
+    const generationState = getGenerationState(domain);
     if (generationState.running) {
       const error = new Error("Forecast regeneration is currently running. Please wait for it to finish.");
       error.code = "RUN_IN_PROGRESS";
       throw error;
     }
 
-    const deleted = await ForecastData.clearFutureByForecastType(FORECAST_TYPE);
+    const deleted = await config.clearRows();
     ForecastCacheService.clear();
     return deleted;
   },
 
   async regenerateForecast({ horizon }) {
+    return this.regenerateForecastForDomain({ domain: "sales", horizon });
+  },
+
+  async regenerateForecastForDomain({ domain = "sales", horizon }) {
+    const config = getDomainConfig(domain);
     const numericHorizon = Number(horizon);
     if (!allowedHorizons.has(numericHorizon)) {
       const error = new Error(`Unsupported horizon "${horizon}". Allowed values are 6, 12, and 24 months.`);
@@ -193,47 +270,48 @@ export const ForecastAdminService = {
       throw error;
     }
 
+    const generationState = getGenerationState(domain);
     if (generationState.running) {
       const error = new Error("A forecast regeneration is already in progress.");
       error.code = "RUN_IN_PROGRESS";
       throw error;
     }
 
-    resetGenerationState(numericHorizon);
+    resetGenerationState(domain, numericHorizon);
 
     // Regeneration runs in the background so the API can return immediately and
     // the UI can poll getStatus for live progress.
-    runForecastWorker({
+    config.run({
       horizon: numericHorizon,
       onProgress(progress) {
-        updateGenerationState(progress);
+        updateGenerationState(domain, progress);
       }
     })
       .then((result) => {
-        updateGenerationState({
+        updateGenerationState(domain, {
           running: false,
           stage: "finished",
           stageLabel: "Finished successfully",
-          message: "Forecast regeneration finished successfully.",
+          message: `${config.label} forecast regeneration finished successfully.`,
           completedAt: new Date().toISOString(),
           inserted: result.inserted ?? generationState.inserted,
           removed: result.removed ?? generationState.removed
         });
       })
       .catch((error) => {
-        updateGenerationState({
+        updateGenerationState(domain, {
           running: false,
           stage: "failed",
           stageLabel: "Failed",
-          message: error.message || "Forecast regeneration failed.",
+          message: error.message || `${config.label} forecast regeneration failed.`,
           failedAt: new Date().toISOString(),
-          error: error.message || "Forecast regeneration failed."
+          error: error.message || `${config.label} forecast regeneration failed.`
         });
       })
       .finally(() => {
         return null;
       });
 
-    return buildGenerationSnapshot();
+    return buildGenerationSnapshot(domain);
   }
 };

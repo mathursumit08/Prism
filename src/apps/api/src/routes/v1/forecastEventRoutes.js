@@ -1,65 +1,142 @@
 import { Router } from "express";
 import { permissions } from "../../auth/accessControl.js";
 import { ForecastEventCalendar } from "../../data/models/index.js";
-import { requirePermission } from "../../middleware/requirePermission.js";
 
 const router = Router();
-const FORECAST_TYPE = "baseline";
+const domainConfigs = {
+  Sales: {
+    forecastType: "baseline",
+    permission: permissions.manageForecast
+  },
+  Parts: {
+    forecastType: "demand",
+    permission: permissions.managePartsForecast
+  },
+  Service: {
+    forecastType: "order_volume",
+    permission: permissions.manageServiceForecast
+  }
+};
 
-router.use(requirePermission(permissions.manageForecast));
+router.use(requireAnyForecastEventPermission);
 
-router.get("/", async (_request, response) => {
+router.get("/", async (request, response) => {
   await respondWithEventAction(response, async () => ({
     ok: true,
-    events: normalizeEvents(await ForecastEventCalendar.findAll({ forecastType: FORECAST_TYPE }))
+    events: normalizeEvents(await ForecastEventCalendar.findAll()).filter((event) =>
+      canManageDomain(request.user, event.forecastDomain)
+    )
   }));
 });
 
 router.post("/", async (request, response) => {
   await respondWithEventAction(
     response,
-    async () => ({
-      ok: true,
-      event: normalizeEvent(await ForecastEventCalendar.insert({
-        ...request.body,
-        forecast_type: FORECAST_TYPE
-      })),
-      message: buildRegenerationNote()
-    }),
+    async () => {
+      const domain = normalizeDomain(request.body?.forecast_domain ?? request.body?.domain);
+      ensureCanManageDomain(request.user, domain);
+      validateDomainScope(domain, request.body?.scope);
+      return {
+        ok: true,
+        event: normalizeEvent(await ForecastEventCalendar.insert({
+          ...request.body,
+          forecast_domain: domain,
+          forecast_type: domainConfigs[domain].forecastType
+        })),
+        message: buildRegenerationNote(domain)
+      };
+    },
     201
   );
 });
 
 router.put("/:eventId", async (request, response) => {
-  await respondWithEventAction(response, async () => ({
-    ok: true,
-    event: normalizeEvent(await ForecastEventCalendar.update(request.params.eventId, {
-      ...request.body,
-      forecast_type: FORECAST_TYPE
-    })),
-    message: buildRegenerationNote()
-  }));
+  await respondWithEventAction(response, async () => {
+    const existing = await ForecastEventCalendar.findById(request.params.eventId);
+    const domain = normalizeDomain(request.body?.forecast_domain ?? request.body?.domain ?? existing?.forecast_domain);
+    ensureCanManageDomain(request.user, existing?.forecast_domain);
+    ensureCanManageDomain(request.user, domain);
+    validateDomainScope(domain, request.body?.scope ?? existing?.scope);
+    return {
+      ok: true,
+      event: normalizeEvent(await ForecastEventCalendar.update(request.params.eventId, {
+        ...request.body,
+        forecast_domain: domain,
+        forecast_type: domainConfigs[domain].forecastType
+      })),
+      message: buildRegenerationNote(domain)
+    };
+  });
 });
 
 router.delete("/:eventId", async (request, response) => {
   await respondWithEventAction(response, async () => {
+    const existing = await ForecastEventCalendar.findById(request.params.eventId);
+    ensureCanManageDomain(request.user, existing?.forecast_domain);
     await ForecastEventCalendar.deleteById(request.params.eventId);
 
     return {
       ok: true,
       deletedEventId: Number(request.params.eventId),
-      message: buildRegenerationNote()
+      message: buildRegenerationNote(existing.forecast_domain)
     };
   });
 });
 
-function buildRegenerationNote() {
-  return "Regenerate forecast data for this event calendar change to take effect, or wait for the scheduled worker run.";
+function buildRegenerationNote(domain = "Sales") {
+  return `Regenerate ${domain} forecast data for this event calendar change to take effect, or wait for the scheduled worker run.`;
+}
+
+function normalizeDomain(value = "Sales") {
+  const text = String(value || "Sales").trim().toLowerCase();
+  if (text === "parts") return "Parts";
+  if (text === "service") return "Service";
+  return "Sales";
+}
+
+function canManageDomain(user, domain) {
+  const config = domainConfigs[normalizeDomain(domain)];
+  return Boolean(config && user?.permissions?.includes(config.permission));
+}
+
+function ensureCanManageDomain(user, domain) {
+  if (!domain) {
+    const error = new Error("Forecast event was not found.");
+    error.code = "EVENT_NOT_FOUND";
+    throw error;
+  }
+
+  if (!canManageDomain(user, domain)) {
+    const error = new Error("You do not have permission to manage events for this forecast domain.");
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+function validateDomainScope(domain, scope) {
+  if (normalizeDomain(domain) === "Sales" && String(scope || "").trim().toLowerCase() === "service center") {
+    const error = new Error("Sales forecast events cannot use Service Center scope.");
+    error.code = "INVALID_EVENT";
+    throw error;
+  }
+}
+
+function requireAnyForecastEventPermission(request, response, next) {
+  if (!Object.values(domainConfigs).some((config) => request.user?.permissions?.includes(config.permission))) {
+    response.status(403).json({
+      ok: false,
+      error: "You do not have permission to access this resource"
+    });
+    return;
+  }
+
+  next();
 }
 
 function normalizeEvent(event) {
   return {
     eventId: event.event_id,
+    forecastDomain: event.forecast_domain,
     forecastType: event.forecast_type,
     eventCode: event.event_code,
     eventName: event.event_name,
