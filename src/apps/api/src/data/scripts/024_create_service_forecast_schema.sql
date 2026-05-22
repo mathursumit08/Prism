@@ -215,7 +215,7 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.role_id, p.permission_id
 FROM roles r
 JOIN permissions p ON p.permission_name = 'View Parts Forecast'
-WHERE r.role_name IN ('Admin', 'National Head', 'Regional Head', 'Parts Manager', 'Service Manager')
+WHERE r.role_name IN ('Admin', 'National Head', 'Regional Head', 'Parts Manager')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO role_permissions (role_id, permission_id)
