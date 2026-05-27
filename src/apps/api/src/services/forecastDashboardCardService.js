@@ -1,6 +1,6 @@
 import { pool } from "../db.js";
 
-export const dashboardCardDomains = ["Sales", "Parts", "Service"];
+export const dashboardCardDomains = ["Sales", "Parts", "Service", "Warranty"];
 
 const baseCards = [
   { key: "trend", label: "Trend - Actual vs Forecast trend", category: "Graphs", displayOrder: 1 },
@@ -25,6 +25,11 @@ const domainLabelOverrides = {
     segmentSplit: "Segment split - Forecast by service segment",
     forecastGraph: "Forecast graph - Monthly orders",
     regionalSegmentSplit: "Regional segment split - Service segments within"
+  },
+  Warranty: {
+    segmentSplit: "Segment split - Forecast by claim and return segment",
+    forecastGraph: "Forecast graph - Monthly claims and returns",
+    regionalSegmentSplit: "Regional segment split - Warranty and returns within"
   }
 };
 

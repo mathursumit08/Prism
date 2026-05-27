@@ -120,8 +120,19 @@ function buildContributionMonths(series) {
 
 function buildBreakdownLabel(item, domain, breakdownMode) {
   if (domain === "parts") return item.partCategory || item.partId || "Unassigned";
+  if (domain === "warranty") {
+    if (breakdownMode === "return_reason") return item.returnReason || "Unassigned";
+    if (breakdownMode === "age_bucket") return item.ageBucket || "Unassigned";
+    return item.claimType || "Unassigned";
+  }
   if (breakdownMode === "job_category") return item.jobCategory || "Unassigned";
   return item.serviceType || "Unassigned";
+}
+
+function getDomainTitle(domain) {
+  if (domain === "parts") return "Parts";
+  if (domain === "warranty") return "Warranty";
+  return "Service";
 }
 
 function aggregateSeriesByBreakdown(series, domain, breakdownMode) {
@@ -624,10 +635,12 @@ function Leaderboard({ rows, unitLabel }) {
 export default function DomainForecastPage({ domain }) {
   const { apiFetch, user } = useAuth();
   const isParts = domain === "parts";
-  const unitLabel = isParts ? "Units" : "Orders";
+  const isWarranty = domain === "warranty";
+  const domainTitle = getDomainTitle(domain);
+  const unitLabel = isParts ? "Units" : isWarranty ? "Claims / Returns" : "Orders";
   const domainAccessScopes = useMemo(
-    () => (user?.accessScopes || []).filter((scope) => scope.domain === (domain === "parts" ? "Parts" : "Service")),
-    [domain, user?.accessScopes]
+    () => (user?.accessScopes || []).filter((scope) => scope.domain === domainTitle),
+    [domainTitle, user?.accessScopes]
   );
   const isServiceCenterScopedManager =
     domainAccessScopes.length > 0 &&
@@ -645,10 +658,13 @@ export default function DomainForecastPage({ domain }) {
   const [partId, setPartId] = useState("");
   const [serviceType, setServiceType] = useState("");
   const [jobCategory, setJobCategory] = useState("");
+  const [claimType, setClaimType] = useState("");
+  const [returnReason, setReturnReason] = useState("");
+  const [ageBucket, setAgeBucket] = useState("");
   const [intervalMode, setIntervalMode] = useState("point");
   const [hoveredGroupId, setHoveredGroupId] = useState("");
   const [hoveredBreakdownId, setHoveredBreakdownId] = useState("");
-  const [referenceState, setReferenceState] = useState({ loading: true, error: "", serviceCenters: [], parts: [], serviceTypes: [], jobCategories: [] });
+  const [referenceState, setReferenceState] = useState({ loading: true, error: "", serviceCenters: [], parts: [], serviceTypes: [], jobCategories: [], claimTypes: [], returnReasons: [], ageBuckets: [] });
   const [forecastState, setForecastState] = useState({ loading: true, error: "", series: [] });
   const [actualState, setActualState] = useState({ loading: true, error: "", series: [] });
   const [breakdownState, setBreakdownState] = useState({ loading: true, error: "", series: [] });
@@ -671,7 +687,7 @@ export default function DomainForecastPage({ domain }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    const dashboardDomain = isParts ? "Parts" : "Service";
+    const dashboardDomain = domainTitle;
 
     async function loadDashboardCards() {
       try {
@@ -703,7 +719,7 @@ export default function DomainForecastPage({ domain }) {
       controller.abort();
       window.removeEventListener("dashboard-card-settings-changed", loadDashboardCards);
     };
-  }, [apiFetch, isParts]);
+  }, [apiFetch, domainTitle]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -718,11 +734,14 @@ export default function DomainForecastPage({ domain }) {
           serviceCenters: payload.serviceCenters || [],
           parts: payload.parts || [],
           serviceTypes: payload.serviceTypes || [],
-          jobCategories: payload.jobCategories || []
+          jobCategories: payload.jobCategories || [],
+          claimTypes: payload.claimTypes || [],
+          returnReasons: payload.returnReasons || [],
+          ageBuckets: payload.ageBuckets || []
         });
       } catch (error) {
         if (error.name === "AbortError") return;
-        setReferenceState({ loading: false, error: error.message || "Unable to load reference data.", serviceCenters: [], parts: [], serviceTypes: [], jobCategories: [] });
+        setReferenceState({ loading: false, error: error.message || "Unable to load reference data.", serviceCenters: [], parts: [], serviceTypes: [], jobCategories: [], claimTypes: [], returnReasons: [], ageBuckets: [] });
       }
     }
     loadReferences();
@@ -737,9 +756,13 @@ export default function DomainForecastPage({ domain }) {
   const groupId = level === "service_center" ? serviceCenterId : level === "state" ? stateId : zoneId;
   const selectedRegionLabel = level === "zone" ? zoneId : level === "state" ? stateId : serviceCenterId;
   const scopeLabel = selectedRegionLabel || (level === "zone" ? "All zones" : level === "state" ? "All states" : "All service centers");
-  const productLabel = isParts ? partId || partCategory || "All parts" : serviceType || jobCategory || "All service orders";
+  const productLabel = isParts
+    ? partId || partCategory || "All parts"
+    : isWarranty
+      ? claimType || returnReason || ageBucket || "All warranty and returns"
+      : serviceType || jobCategory || "All service orders";
   const activeLevelLabel = forecastLevels.find((item) => item.value === level)?.label || "Group";
-  const breakdownMode = isParts ? "part_category" : serviceType ? "job_category" : "service_type";
+  const breakdownMode = isParts ? "part_category" : isWarranty ? (claimType ? (returnReason ? "age_bucket" : "return_reason") : "claim_type") : serviceType ? "job_category" : "service_type";
 
   useEffect(() => {
     if (isServiceCenterScopedManager) {
@@ -773,6 +796,10 @@ export default function DomainForecastPage({ domain }) {
         if (isParts) {
           if (partCategory) params.set("partCategory", partCategory);
           if (partId) params.set("partId", partId);
+        } else if (isWarranty) {
+          if (claimType) params.set("claimType", claimType);
+          if (returnReason) params.set("returnReason", returnReason);
+          if (ageBucket) params.set("ageBucket", ageBucket);
         } else {
           if (serviceType) params.set("serviceType", serviceType);
           if (jobCategory) params.set("jobCategory", jobCategory);
@@ -795,7 +822,7 @@ export default function DomainForecastPage({ domain }) {
     }
     loadForecast();
     return () => controller.abort();
-  }, [apiFetch, currentMonthStart, domain, groupId, horizonMonths, isParts, jobCategory, level, partCategory, partId, serviceType]);
+  }, [ageBucket, apiFetch, claimType, currentMonthStart, domain, groupId, horizonMonths, isParts, isWarranty, jobCategory, level, partCategory, partId, returnReason, serviceType]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -816,6 +843,10 @@ export default function DomainForecastPage({ domain }) {
         if (isParts) {
           if (partCategory) params.set("partCategory", partCategory);
           if (partId) params.set("partId", partId);
+        } else if (isWarranty) {
+          if (claimType) params.set("claimType", claimType);
+          if (returnReason) params.set("returnReason", returnReason);
+          if (ageBucket) params.set("ageBucket", ageBucket);
         } else {
           if (serviceType) params.set("serviceType", serviceType);
           if (jobCategory) params.set("jobCategory", jobCategory);
@@ -832,7 +863,7 @@ export default function DomainForecastPage({ domain }) {
     }
     loadBreakdown();
     return () => controller.abort();
-  }, [activeSection, apiFetch, breakdownMode, currentMonthStart, domain, groupId, horizonMonths, isParts, jobCategory, level, partCategory, partId, serviceType]);
+  }, [activeSection, ageBucket, apiFetch, breakdownMode, claimType, currentMonthStart, domain, groupId, horizonMonths, isParts, isWarranty, jobCategory, level, partCategory, partId, returnReason, serviceType]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -852,6 +883,10 @@ export default function DomainForecastPage({ domain }) {
         if (isParts) {
           if (partCategory) params.set("partCategory", partCategory);
           if (partId) params.set("partId", partId);
+        } else if (isWarranty) {
+          if (claimType) params.set("claimType", claimType);
+          if (returnReason) params.set("returnReason", returnReason);
+          if (ageBucket) params.set("ageBucket", ageBucket);
         } else {
           if (serviceType) params.set("serviceType", serviceType);
           if (jobCategory) params.set("jobCategory", jobCategory);
@@ -875,7 +910,7 @@ export default function DomainForecastPage({ domain }) {
     }
     loadDiagnostics();
     return () => controller.abort();
-  }, [activeSection, apiFetch, domain, groupId, horizonMonths, isParts, jobCategory, level, partCategory, partId, serviceType]);
+  }, [activeSection, ageBucket, apiFetch, claimType, domain, groupId, horizonMonths, isParts, isWarranty, jobCategory, level, partCategory, partId, returnReason, serviceType]);
 
   const visibleSeries = forecastState.series;
   const visibleBreakdownSeries = useMemo(
@@ -912,7 +947,7 @@ export default function DomainForecastPage({ domain }) {
       <div className="forecast-ops-main">
         <section className="forecast-ops-header">
           <div>
-            <p className="eyebrow">{isParts ? "Parts Dashboard" : "Service Dashboard"}</p>
+            <p className="eyebrow">{domainTitle} Dashboard</p>
             <h1>{activeSectionLabel}</h1>
             <p>{scopeLabel} · {productLabel}</p>
           </div>
@@ -995,6 +1030,30 @@ export default function DomainForecastPage({ domain }) {
                   </select>
                 </label>
               </>
+            ) : isWarranty ? (
+              <>
+                <label>
+                  Claim Type
+                  <select value={claimType} onChange={(event) => setClaimType(event.target.value)} disabled={referenceState.loading}>
+                    <option value="">All claim types</option>
+                    {referenceState.claimTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Return Reason
+                  <select value={returnReason} onChange={(event) => setReturnReason(event.target.value)} disabled={referenceState.loading}>
+                    <option value="">All return reasons</option>
+                    {referenceState.returnReasons.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Age Bucket
+                  <select value={ageBucket} onChange={(event) => setAgeBucket(event.target.value)} disabled={referenceState.loading}>
+                    <option value="">All age buckets</option>
+                    {referenceState.ageBuckets.map((bucket) => <option key={bucket} value={bucket}>{bucket}</option>)}
+                  </select>
+                </label>
+              </>
             ) : (
               <>
                 <label>
@@ -1044,8 +1103,8 @@ export default function DomainForecastPage({ domain }) {
               <article className={`analytics-panel ${!cards.trend ? "full-width-panel" : ""}`}>
                 <div className="panel-heading compact">
                   <div>
-                    <InfoEyebrow info={isParts ? "Shows how the selected forecast is distributed across part categories." : "Shows how the selected forecast is distributed across service segments."}>Segment split</InfoEyebrow>
-                    <h2>{isParts ? `Forecast by part category for ${scopeLabel}` : `Forecast by service segment for ${scopeLabel}`}</h2>
+                    <InfoEyebrow info={isParts ? "Shows how the selected forecast is distributed across part categories." : isWarranty ? "Shows how the selected forecast is distributed across warranty claim and return segments." : "Shows how the selected forecast is distributed across service segments."}>Segment split</InfoEyebrow>
+                    <h2>{isParts ? `Forecast by part category for ${scopeLabel}` : isWarranty ? `Forecast by warranty segment for ${scopeLabel}` : `Forecast by service segment for ${scopeLabel}`}</h2>
                     <p className="panel-subcopy">{hasBreakdownData ? `${breakdownSummary.leader?.groupLabel || "Top group"} leads this view.` : "Waiting for breakdown data."}</p>
                   </div>
                 </div>
@@ -1088,8 +1147,8 @@ export default function DomainForecastPage({ domain }) {
               <article className={`forecast-panel ${!cards.forecastGraph ? "full-width-panel" : ""}`}>
                 <div className="panel-heading">
                   <div>
-                    <InfoEyebrow info={isParts ? "Shows part-category forecast lines within the selected region or scope. Use it to compare expected demand movement by category." : "Shows service-segment forecast lines within the selected region or scope. Use it to compare expected order movement by service segment."}>Regional segment split</InfoEyebrow>
-                    <h2>{isParts ? `Part categories within ${scopeLabel}` : `Service segments within ${scopeLabel}`}</h2>
+                    <InfoEyebrow info={isParts ? "Shows part-category forecast lines within the selected region or scope. Use it to compare expected demand movement by category." : isWarranty ? "Shows warranty and return segment forecast lines within the selected region or scope." : "Shows service-segment forecast lines within the selected region or scope. Use it to compare expected order movement by service segment."}>Regional segment split</InfoEyebrow>
+                    <h2>{isParts ? `Part categories within ${scopeLabel}` : isWarranty ? `Warranty segments within ${scopeLabel}` : `Service segments within ${scopeLabel}`}</h2>
                     <p className="panel-subcopy">{productLabel}</p>
                   </div>
                   <div className="panel-pill-group"><span className="source-pill interval-context">{intervalMode === "point" ? "Point only" : `${intervalMode}% band`}</span></div>

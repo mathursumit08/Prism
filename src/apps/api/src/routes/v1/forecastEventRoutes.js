@@ -15,6 +15,10 @@ const domainConfigs = {
   Service: {
     forecastType: "order_volume",
     permission: permissions.manageServiceForecast
+  },
+  Warranty: {
+    forecastType: "warranty_returns",
+    permission: permissions.manageWarrantyForecast
   }
 };
 
@@ -91,6 +95,7 @@ function normalizeDomain(value = "Sales") {
   const text = String(value || "Sales").trim().toLowerCase();
   if (text === "parts") return "Parts";
   if (text === "service") return "Service";
+  if (text === "warranty") return "Warranty";
   return "Sales";
 }
 

@@ -1,10 +1,11 @@
 import { DomainForecastData, ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
 import { ForecastCacheService } from "./forecastCacheService.js";
-import { runForecastWorker, runPartsForecastWorker, runServiceForecastWorker } from "../workers/forecastWorker.js";
+import { runForecastWorker, runPartsForecastWorker, runServiceForecastWorker, runWarrantyForecastWorker } from "../workers/forecastWorker.js";
 
 const FORECAST_TYPE = "baseline";
 const PARTS_FORECAST_TYPE = "demand";
 const SERVICE_FORECAST_TYPE = "order_volume";
+const WARRANTY_FORECAST_TYPE = "warranty_returns";
 const DEFAULT_HORIZON_MONTHS = 6;
 const allowedHorizons = new Set([6, 12, 24]);
 const domainConfigs = {
@@ -34,6 +35,15 @@ const domainConfigs = {
     run: runServiceForecastWorker,
     countRows: () => DomainForecastData.count("service", SERVICE_FORECAST_TYPE),
     clearRows: () => DomainForecastData.clearFuture("service", SERVICE_FORECAST_TYPE)
+  },
+  warranty: {
+    key: "warranty",
+    domain: "Warranty",
+    forecastType: WARRANTY_FORECAST_TYPE,
+    label: "Warranty",
+    run: runWarrantyForecastWorker,
+    countRows: () => DomainForecastData.count("warranty", WARRANTY_FORECAST_TYPE),
+    clearRows: () => DomainForecastData.clearFuture("warranty", WARRANTY_FORECAST_TYPE)
   }
 };
 
@@ -172,8 +182,28 @@ function filterUpcomingEvents(events, horizonMonths) {
   return events.filter((event) => event.end_date >= today && event.start_date <= horizonEnd);
 }
 
-function buildGenerationSnapshot(domain) {
+function buildGenerationSnapshot(domain, latestRun = null) {
   const generationState = getGenerationState(domain);
+
+  if (!generationState.running && latestRun?.status === "running") {
+    return {
+      running: false,
+      stage: "failed",
+      stageLabel: "Interrupted",
+      message: "The latest forecast run started but did not report completion. The worker process may have exited abruptly.",
+      horizon: latestRun.horizon_months,
+      runId: latestRun.run_id,
+      startedAt: latestRun.started_at,
+      completedAt: null,
+      failedAt: null,
+      error: "The latest forecast run is still marked running in forecast_runs.",
+      processedScopes: 0,
+      totalScopes: 0,
+      inserted: 0,
+      removed: 0
+    };
+  }
+
   return {
     running: generationState.running,
     stage: generationState.stage,
@@ -229,7 +259,7 @@ export const ForecastAdminService = {
       forecastType: config.forecastType,
       forecastLabel: config.label,
       allowedHorizons: this.getAllowedHorizons(),
-      generation: buildGenerationSnapshot(domain),
+      generation: buildGenerationSnapshot(domain, latestRun),
       lastSuccessfulRun: normalizeRun(lastSuccessfulRun),
       latestRun: normalizeRun(latestRun),
       lastFailedRun: normalizeRun(lastFailedRun),

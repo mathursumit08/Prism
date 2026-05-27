@@ -1,0 +1,61 @@
+service_center_id,service_center_name,region,city,state,center_type,service_capacity_per_day,active_technicians,service_bays,is_active
+SVC001,Apex Service New Delhi,North,New Delhi,Delhi,Metro,82,16,10,true
+SVC002,DriveWell Service Noida,North,Noida,Uttar Pradesh,Metro,85,17,11,true
+SVC003,City Workshop Chandigarh,North,Chandigarh,Chandigarh,Metro,88,18,11,true
+SVC004,Apex Service Dehradun,North,Dehradun,Uttarakhand,Urban,58,12,7,true
+SVC005,City Workshop Jaipur,North,Jaipur,Rajasthan,Urban,60,12,8,true
+SVC006,Rapid Auto Care Ludhiana,North,Ludhiana,Punjab,Urban,62,12,8,true
+SVC007,DriveWell Service Lucknow,North,Lucknow,Uttar Pradesh,Urban,64,13,8,true
+SVC008,Rapid Auto Care Jodhpur,North,Jodhpur,Rajasthan,Urban,66,13,8,true
+SVC009,Apex Service Gurugram,North,Gurugram,Haryana,Urban,68,14,9,true
+SVC010,Prime Care Kanpur,North,Kanpur,Uttar Pradesh,Tier-2,43,9,6,true
+SVC011,City Workshop Amritsar,North,Amritsar,Punjab,Tier-2,44,9,6,true
+SVC012,Apex Service Shimla,North,Shimla,Himachal Pradesh,Tier-2,45,9,6,true
+SVC013,City Workshop Agra,North,Agra,Uttar Pradesh,Tier-2,46,9,6,true
+SVC014,Apex Service Udaipur,North,Udaipur,Rajasthan,Tier-2,47,9,6,true
+SVC015,Rapid Auto Care Faridabad,North,Faridabad,Haryana,Tier-2,48,10,6,true
+SVC016,Apex Service Mumbai,West,Mumbai,Maharashtra,Metro,82,16,10,true
+SVC017,Prime Care Pune,West,Pune,Maharashtra,Metro,85,17,11,true
+SVC018,City Workshop Ahmedabad,West,Ahmedabad,Gujarat,Metro,88,18,11,true
+SVC019,Prime Care Surat,West,Surat,Gujarat,Urban,58,12,7,true
+SVC020,Rapid Auto Care Navi Mumbai,West,Navi Mumbai,Maharashtra,Urban,60,12,8,true
+SVC021,City Workshop Vadodara,West,Vadodara,Gujarat,Urban,62,12,8,true
+SVC022,Prime Care Nashik,West,Nashik,Maharashtra,Urban,64,13,8,true
+SVC023,Prime Care Rajkot,West,Rajkot,Gujarat,Urban,66,13,8,true
+SVC024,Rapid Auto Care Indore,West,Indore,Madhya Pradesh,Urban,68,14,9,true
+SVC025,DriveWell Service Bhopal,West,Bhopal,Madhya Pradesh,Tier-2,43,9,6,true
+SVC026,Rapid Auto Care Nagpur,West,Nagpur,Maharashtra,Tier-2,44,9,6,true
+SVC027,Apex Service Thane,West,Thane,Maharashtra,Tier-2,45,9,6,true
+SVC028,DriveWell Service Aurangabad,West,Aurangabad,Maharashtra,Tier-2,46,9,6,true
+SVC029,DriveWell Service Gandhinagar,West,Gandhinagar,Gujarat,Tier-2,47,9,6,true
+SVC030,Prime Care Kolhapur,West,Kolhapur,Maharashtra,Tier-2,48,10,6,true
+SVC031,City Workshop Bengaluru,South,Bengaluru,Karnataka,Metro,82,16,10,true
+SVC032,Apex Service Chennai,South,Chennai,Tamil Nadu,Metro,85,17,11,true
+SVC033,DriveWell Service Hyderabad,South,Hyderabad,Telangana,Metro,88,18,11,true
+SVC034,Prime Care Kochi,South,Kochi,Kerala,Urban,58,12,7,true
+SVC035,DriveWell Service Mysuru,South,Mysuru,Karnataka,Urban,60,12,8,true
+SVC036,Prime Care Coimbatore,South,Coimbatore,Tamil Nadu,Urban,62,12,8,true
+SVC037,Apex Service Madurai,South,Madurai,Tamil Nadu,Urban,64,13,8,true
+SVC038,Prime Care Vijayawada,South,Vijayawada,Andhra Pradesh,Urban,66,13,8,true
+SVC039,Apex Service Visakhapatnam,South,Visakhapatnam,Andhra Pradesh,Urban,68,14,9,true
+SVC040,Apex Service Trivandrum,South,Trivandrum,Kerala,Tier-2,43,9,6,true
+SVC041,Apex Service Mangaluru,South,Mangaluru,Karnataka,Tier-2,44,9,6,true
+SVC042,Apex Service Salem,South,Salem,Tamil Nadu,Tier-2,45,9,6,true
+SVC043,Apex Service Warangal,South,Warangal,Telangana,Tier-2,46,9,6,true
+SVC044,Prime Care Tirupati,South,Tirupati,Andhra Pradesh,Tier-2,47,9,6,true
+SVC045,Rapid Auto Care Hubballi,South,Hubballi,Karnataka,Tier-2,48,10,6,true
+SVC046,DriveWell Service Kolkata,East,Kolkata,West Bengal,Metro,82,16,10,true
+SVC047,City Workshop Bhubaneswar,East,Bhubaneswar,Odisha,Metro,85,17,11,true
+SVC048,Apex Service Guwahati,East,Guwahati,Assam,Metro,88,18,11,true
+SVC049,Apex Service Patna,East,Patna,Bihar,Urban,58,12,7,true
+SVC050,City Workshop Ranchi,East,Ranchi,Jharkhand,Urban,60,12,8,true
+SVC051,DriveWell Service Siliguri,East,Siliguri,West Bengal,Urban,62,12,8,true
+SVC052,Prime Care Durgapur,East,Durgapur,West Bengal,Urban,64,13,8,true
+SVC053,City Workshop Cuttack,East,Cuttack,Odisha,Urban,66,13,8,true
+SVC054,City Workshop Jamshedpur,East,Jamshedpur,Jharkhand,Urban,68,14,9,true
+SVC055,City Workshop Raipur,East,Raipur,Chhattisgarh,Tier-2,43,9,6,true
+SVC056,Rapid Auto Care Bilaspur,East,Bilaspur,Chhattisgarh,Tier-2,44,9,6,true
+SVC057,Prime Care Shillong,East,Shillong,Meghalaya,Tier-2,45,9,6,true
+SVC058,Rapid Auto Care Muzaffarpur,East,Muzaffarpur,Bihar,Tier-2,46,9,6,true
+SVC059,Prime Care Asansol,East,Asansol,West Bengal,Tier-2,47,9,6,true
+SVC060,Apex Service Imphal,East,Imphal,Manipur,Tier-2,48,10,6,true
