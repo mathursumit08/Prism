@@ -26,6 +26,19 @@ const domainConfigs = {
       modelId: "model_id",
       variantId: "variant_id"
     }
+  },
+  warranty: {
+    forecastDomain: "Warranty",
+    forecastType: "warranty_returns",
+    tableName: "warranty_forecast_data",
+    unitColumn: "forecast_units",
+    dimensionColumns: {
+      claimType: "claim_type",
+      returnReason: "return_reason",
+      ageBucket: "age_bucket",
+      modelId: "model_id",
+      variantId: "variant_id"
+    }
   }
 };
 
@@ -105,6 +118,9 @@ function groupRows(rows, domain) {
       row.part_category ?? "",
       row.service_type ?? "",
       row.job_category ?? "",
+      row.claim_type ?? "",
+      row.return_reason ?? "",
+      row.age_bucket ?? "",
       row.model_id ?? "",
       row.variant_id ?? ""
     ].join("|");
@@ -118,6 +134,9 @@ function groupRows(rows, domain) {
         partCategory: row.part_category ?? null,
         serviceType: row.service_type ?? null,
         jobCategory: row.job_category ?? null,
+        claimType: row.claim_type ?? null,
+        returnReason: row.return_reason ?? null,
+        ageBucket: row.age_bucket ?? null,
         modelId: row.model_id,
         variantId: row.variant_id,
         seriesKey: row.group_id,
@@ -162,12 +181,40 @@ function buildDimensionSql(domain, query) {
         includePartCategory ? "fd.part_category" : "NULL::VARCHAR AS part_category",
         "NULL::VARCHAR AS service_type",
         "NULL::VARCHAR AS job_category",
+        "NULL::VARCHAR AS claim_type",
+        "NULL::VARCHAR AS return_reason",
+        "NULL::VARCHAR AS age_bucket",
         "NULL::VARCHAR AS model_id",
         "NULL::VARCHAR AS variant_id"
       ].join(",\n          "),
       groupBy: [
         includePartId ? "fd.part_id" : null,
         includePartCategory ? "fd.part_category" : null
+      ].filter(Boolean)
+    };
+  }
+
+  if (domain === "warranty") {
+    const includeClaimType = Boolean(query.claimType || query.breakdown === "claim_type");
+    const includeReturnReason = Boolean(query.returnReason || query.breakdown === "return_reason");
+    const includeAgeBucket = Boolean(query.ageBucket || query.breakdown === "age_bucket");
+
+    return {
+      select: [
+        "NULL::VARCHAR AS part_id",
+        "NULL::VARCHAR AS part_category",
+        "NULL::VARCHAR AS service_type",
+        "NULL::VARCHAR AS job_category",
+        includeClaimType ? "fd.claim_type" : "NULL::VARCHAR AS claim_type",
+        includeReturnReason ? "fd.return_reason" : "NULL::VARCHAR AS return_reason",
+        includeAgeBucket ? "fd.age_bucket" : "NULL::VARCHAR AS age_bucket",
+        "NULL::VARCHAR AS model_id",
+        "NULL::VARCHAR AS variant_id"
+      ].join(",\n          "),
+      groupBy: [
+        includeClaimType ? "fd.claim_type" : null,
+        includeReturnReason ? "fd.return_reason" : null,
+        includeAgeBucket ? "fd.age_bucket" : null
       ].filter(Boolean)
     };
   }
@@ -181,6 +228,9 @@ function buildDimensionSql(domain, query) {
       "NULL::VARCHAR AS part_category",
       includeServiceType ? "fd.service_type" : "NULL::VARCHAR AS service_type",
       includeJobCategory ? "fd.job_category" : "NULL::VARCHAR AS job_category",
+      "NULL::VARCHAR AS claim_type",
+      "NULL::VARCHAR AS return_reason",
+      "NULL::VARCHAR AS age_bucket",
       "NULL::VARCHAR AS model_id",
       "NULL::VARCHAR AS variant_id"
     ].join(",\n          "),
@@ -202,12 +252,40 @@ function buildActualDimensionSql(domain, query) {
         includePartCategory ? "part_category" : "NULL::VARCHAR AS part_category",
         "NULL::VARCHAR AS service_type",
         "NULL::VARCHAR AS job_category",
+        "NULL::VARCHAR AS claim_type",
+        "NULL::VARCHAR AS return_reason",
+        "NULL::VARCHAR AS age_bucket",
         "NULL::VARCHAR AS model_id",
         "NULL::VARCHAR AS variant_id"
       ].join(",\n        "),
       groupBy: [
         includePartId ? "part_id" : null,
         includePartCategory ? "part_category" : null
+      ].filter(Boolean)
+    };
+  }
+
+  if (domain === "warranty") {
+    const includeClaimType = Boolean(query.claimType || query.breakdown === "claim_type");
+    const includeReturnReason = Boolean(query.returnReason || query.breakdown === "return_reason");
+    const includeAgeBucket = Boolean(query.ageBucket || query.breakdown === "age_bucket");
+
+    return {
+      select: [
+        "NULL::VARCHAR AS part_id",
+        "NULL::VARCHAR AS part_category",
+        "NULL::VARCHAR AS service_type",
+        "NULL::VARCHAR AS job_category",
+        includeClaimType ? "claim_type" : "NULL::VARCHAR AS claim_type",
+        includeReturnReason ? "return_reason" : "NULL::VARCHAR AS return_reason",
+        includeAgeBucket ? "age_bucket" : "NULL::VARCHAR AS age_bucket",
+        "NULL::VARCHAR AS model_id",
+        "NULL::VARCHAR AS variant_id"
+      ].join(",\n        "),
+      groupBy: [
+        includeClaimType ? "claim_type" : null,
+        includeReturnReason ? "return_reason" : null,
+        includeAgeBucket ? "age_bucket" : null
       ].filter(Boolean)
     };
   }
@@ -221,6 +299,9 @@ function buildActualDimensionSql(domain, query) {
       "NULL::VARCHAR AS part_category",
       includeServiceType ? "service_type" : "NULL::VARCHAR AS service_type",
       includeJobCategory ? "job_category" : "NULL::VARCHAR AS job_category",
+      "NULL::VARCHAR AS claim_type",
+      "NULL::VARCHAR AS return_reason",
+      "NULL::VARCHAR AS age_bucket",
       "NULL::VARCHAR AS model_id",
       "NULL::VARCHAR AS variant_id"
     ].join(",\n        "),
@@ -264,6 +345,9 @@ function buildActualBaseCte(domain, query, values) {
         sp.part_category,
         NULL::VARCHAR AS service_type,
         NULL::VARCHAR AS job_category,
+        NULL::VARCHAR AS claim_type,
+        NULL::VARCHAR AS return_reason,
+        NULL::VARCHAR AS age_bucket,
         msd.model_id,
         msd.variant_id,
         msd.month,
@@ -273,6 +357,52 @@ function buildActualBaseCte(domain, query, values) {
       JOIN service_parts sp ON sp.part_id = msd.part_id
       WHERE ${sourceConditions.join(" AND ")}
       GROUP BY sc.service_center_id, sc.service_center_name, sc.state, sc.region, sp.part_id, sp.part_category, msd.model_id, msd.variant_id, msd.month
+    `;
+  }
+
+  if (domain === "warranty") {
+    if (query.claimType) {
+      values.push(query.claimType);
+      sourceConditions.push(`mwv.claim_type = $${values.length}`);
+    }
+    if (query.returnReason) {
+      values.push(query.returnReason);
+      sourceConditions.push(`mwv.return_reason = $${values.length}`);
+    }
+    if (query.ageBucket) {
+      values.push(query.ageBucket);
+      sourceConditions.push(`mwv.age_bucket = $${values.length}`);
+    }
+    if (query.modelId) {
+      values.push(query.modelId);
+      sourceConditions.push(`mwv.model_id = $${values.length}`);
+    }
+    if (query.variantId) {
+      values.push(query.variantId);
+      sourceConditions.push(`mwv.variant_id = $${values.length}`);
+    }
+
+    return `
+      SELECT
+        sc.service_center_id,
+        sc.service_center_name,
+        sc.state,
+        sc.region,
+        NULL::VARCHAR AS part_id,
+        NULL::VARCHAR AS part_category,
+        NULL::VARCHAR AS service_type,
+        NULL::VARCHAR AS job_category,
+        mwv.claim_type,
+        mwv.return_reason,
+        mwv.age_bucket,
+        mwv.model_id,
+        mwv.variant_id,
+        mwv.month,
+        SUM(mwv.claim_count + mwv.return_count)::NUMERIC AS actual_units
+      FROM monthly_warranty_return_volume mwv
+      JOIN service_centers sc ON sc.service_center_id = mwv.service_center_id
+      WHERE ${sourceConditions.join(" AND ")}
+      GROUP BY sc.service_center_id, sc.service_center_name, sc.state, sc.region, mwv.claim_type, mwv.return_reason, mwv.age_bucket, mwv.model_id, mwv.variant_id, mwv.month
     `;
   }
 
@@ -303,6 +433,9 @@ function buildActualBaseCte(domain, query, values) {
       NULL::VARCHAR AS part_category,
       mov.service_type,
       mov.job_category,
+      NULL::VARCHAR AS claim_type,
+      NULL::VARCHAR AS return_reason,
+      NULL::VARCHAR AS age_bucket,
       mov.model_id,
       mov.variant_id,
       mov.month,
@@ -325,6 +458,9 @@ function groupActualRows(rows, domain) {
       row.part_category ?? "",
       row.service_type ?? "",
       row.job_category ?? "",
+      row.claim_type ?? "",
+      row.return_reason ?? "",
+      row.age_bucket ?? "",
       row.model_id ?? "",
       row.variant_id ?? ""
     ].join("|");
@@ -338,6 +474,9 @@ function groupActualRows(rows, domain) {
         partCategory: row.part_category ?? null,
         serviceType: row.service_type ?? null,
         jobCategory: row.job_category ?? null,
+        claimType: row.claim_type ?? null,
+        returnReason: row.return_reason ?? null,
+        ageBucket: row.age_bucket ?? null,
         modelId: row.model_id,
         variantId: row.variant_id,
         seriesKey: row.group_id,
@@ -639,7 +778,7 @@ export async function getDomainForecastPayload(domain, query, user, db = pool) {
         SELECT
           *,
           ROW_NUMBER() OVER (
-            PARTITION BY level, group_id, part_id, part_category, service_type, job_category, model_id, variant_id
+            PARTITION BY level, group_id, part_id, part_category, service_type, job_category, claim_type, return_reason, age_bucket, model_id, variant_id
             ORDER BY fd.forecast_month
           ) AS horizon_month
         FROM aggregated fd
@@ -1048,6 +1187,45 @@ export async function getDomainReferencePayload(domain, user, db = pool) {
       })),
       serviceTypes: [...new Set(optionsResult.rows.map((row) => row.service_type).filter(Boolean))].sort(),
       jobCategories: [...new Set(optionsResult.rows.map((row) => row.job_category).filter(Boolean))].sort()
+    };
+  }
+
+  if (domain === "warranty") {
+    const [centersResult, optionsResult] = await Promise.all([
+      db.query(
+        `
+        SELECT service_center_id, service_center_name, region, city, state, center_type
+        FROM service_centers
+        WHERE ${centerConditions.join(" AND ")}
+        ORDER BY service_center_name
+      `,
+        centerValues
+      ),
+      db.query(
+        `
+        SELECT DISTINCT mwv.claim_type, mwv.return_reason, mwv.age_bucket
+        FROM monthly_warranty_return_volume mwv
+        JOIN service_centers sc ON sc.service_center_id = mwv.service_center_id
+        WHERE ${sourceConditions.join(" AND ")}
+        ORDER BY claim_type, return_reason, age_bucket
+      `,
+        sourceValues
+      )
+    ]);
+
+    return {
+      ok: true,
+      serviceCenters: centersResult.rows.map((row) => ({
+        id: row.service_center_id,
+        name: row.service_center_name,
+        region: row.region,
+        city: row.city,
+        state: row.state,
+        centerType: row.center_type
+      })),
+      claimTypes: [...new Set(optionsResult.rows.map((row) => row.claim_type).filter(Boolean))].sort(),
+      returnReasons: [...new Set(optionsResult.rows.map((row) => row.return_reason).filter(Boolean))].sort(),
+      ageBuckets: [...new Set(optionsResult.rows.map((row) => row.age_bucket).filter(Boolean))].sort()
     };
   }
 

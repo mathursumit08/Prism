@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import { pool } from "../db.js";
 import { buildBaselineForecast } from "../forecasting/baselineForecast.js";
-import { buildPartsDemandForecast, buildServiceOrderForecast } from "../forecasting/domainForecasts.js";
+import { buildPartsDemandForecast, buildServiceOrderForecast, buildWarrantyReturnsForecast } from "../forecasting/domainForecasts.js";
 import { DomainForecastData, ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
 import { ForecastCacheService } from "../services/forecastCacheService.js";
 import { ForecastBiasService } from "../services/forecastBiasService.js";
@@ -13,15 +13,18 @@ const FORECAST_TYPE = "baseline";
 const SALES_DOMAIN = "Sales";
 const PARTS_DOMAIN = "Parts";
 const SERVICE_DOMAIN = "Service";
+const WARRANTY_DOMAIN = "Warranty";
 const PARTS_FORECAST_TYPE = "demand";
 const SERVICE_FORECAST_TYPE = "order_volume";
+const WARRANTY_FORECAST_TYPE = "warranty_returns";
 const DEFAULT_HORIZON = 6;
-const MAX_BATCH_SIZE = 500;
+const MAX_BATCH_SIZE = 2500;
 const CALIBRATION_TOLERANCE_PERCENTAGE_POINTS = 2;
 const workerLockId = 46013520;
 const domainWorkerLockIds = {
   [PARTS_DOMAIN]: 46013521,
-  [SERVICE_DOMAIN]: 46013522
+  [SERVICE_DOMAIN]: 46013522,
+  [WARRANTY_DOMAIN]: 46013523
 };
 const currentFile = fileURLToPath(import.meta.url);
 
@@ -143,6 +146,14 @@ function roundCorrection(value) {
   }
 
   return Number(value.toFixed(6));
+}
+
+function roundUnits(value) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round(value));
 }
 
 function summarizeBiasCorrection(points) {
@@ -531,6 +542,9 @@ function aggregateAdjustedDomainSeries(baseSeries, level) {
       series.partCategory ?? "",
       series.serviceType ?? "",
       series.jobCategory ?? "",
+      series.claimType ?? "",
+      series.returnReason ?? "",
+      series.ageBucket ?? "",
       series.modelId ?? "",
       series.variantId ?? ""
     ].join("|");
@@ -602,6 +616,19 @@ async function fetchServiceForecastScopes(db = pool) {
   ];
 }
 
+async function fetchWarrantyForecastScopes(db = pool) {
+  await db.query("SELECT 1");
+  return [
+    {
+      claimType: null,
+      returnReason: null,
+      ageBucket: null,
+      modelId: null,
+      variantId: null
+    }
+  ];
+}
+
 function addMonths(month, offset) {
   const date = new Date(`${month}T00:00:00.000Z`);
   date.setUTCMonth(date.getUTCMonth() + offset);
@@ -654,7 +681,11 @@ function flattenForecast({ runId, scope, forecast }) {
 }
 
 function flattenDomainForecast({ domain, runId, scope, forecast }) {
-  const forecastType = domain === PARTS_DOMAIN ? PARTS_FORECAST_TYPE : SERVICE_FORECAST_TYPE;
+  const forecastType = domain === PARTS_DOMAIN
+    ? PARTS_FORECAST_TYPE
+    : domain === SERVICE_DOMAIN
+      ? SERVICE_FORECAST_TYPE
+      : WARRANTY_FORECAST_TYPE;
   const records = [];
 
   for (const levelResult of forecast.levels) {
@@ -670,15 +701,18 @@ function flattenDomainForecast({ domain, runId, scope, forecast }) {
           partCategory: series.partCategory ?? scope.partCategory ?? null,
           serviceType: series.serviceType ?? scope.serviceType ?? null,
           jobCategory: series.jobCategory ?? scope.jobCategory ?? null,
+          claimType: series.claimType ?? scope.claimType ?? null,
+          returnReason: series.returnReason ?? scope.returnReason ?? null,
+          ageBucket: series.ageBucket ?? scope.ageBucket ?? null,
           modelId: series.modelId ?? scope.modelId ?? null,
           variantId: series.variantId ?? scope.variantId ?? null,
           forecastMonth: point.month,
-          forecastUnits: point.units,
-          forecastOrders: point.units,
-          lower80: point.lower80 ?? point.units,
-          upper80: point.upper80 ?? point.units,
-          lower95: point.lower95 ?? point.units,
-          upper95: point.upper95 ?? point.units,
+          forecastUnits: roundUnits(point.units),
+          forecastOrders: roundUnits(point.units),
+          lower80: roundUnits(point.lower80 ?? point.units),
+          upper80: roundUnits(point.upper80 ?? point.units),
+          lower95: roundUnits(point.lower95 ?? point.units),
+          upper95: roundUnits(point.upper95 ?? point.units),
           horizonMonth: index + 1,
           modelMethod: series.method,
           validationMae: series.validation.mae,
@@ -729,6 +763,53 @@ function collectCalibrationSummaries({ scope, forecast }) {
   return summaries;
 }
 
+function collectDomainCalibrationSummaries({ scope, forecast }) {
+  const summaries = [];
+  const serviceCenterLevel = forecast.levels.find((levelResult) => levelResult.level === "service_center");
+
+  for (const series of serviceCenterLevel?.series ?? []) {
+    const calibration = series.calibration;
+
+    if (!calibration || !Number.isFinite(calibration.coverage80) || !Number.isFinite(calibration.coverage95)) {
+      continue;
+    }
+
+    const horizonWidths = series.forecast.map((point, index) => {
+      const calibrationWidth = calibration.horizonWidths?.[index];
+
+      return {
+        horizonMonth: index + 1,
+        width80: (point.upper80 ?? point.units) - (point.lower80 ?? point.units),
+        width95: (point.upper95 ?? point.units) - (point.lower95 ?? point.units),
+        sampleCount: calibrationWidth?.sampleCount ?? 0
+      };
+    });
+
+    summaries.push({
+      seriesKey: [
+        scope.partId ?? "",
+        scope.partCategory ?? "",
+        scope.serviceType ?? "",
+        scope.jobCategory ?? "",
+        scope.claimType ?? "",
+        scope.returnReason ?? "",
+        scope.ageBucket ?? "",
+        scope.modelId ?? "",
+        scope.variantId ?? "",
+        series.groupId
+      ].join(":"),
+      coverage80: calibration.coverage80,
+      coverage95: calibration.coverage95,
+      calibrationSampleCount: calibration.sampleCount,
+      avgWidth80: Number(mean(horizonWidths.map((item) => item.width80)).toFixed(2)),
+      avgWidth95: Number(mean(horizonWidths.map((item) => item.width95)).toFixed(2)),
+      horizonWidths
+    });
+  }
+
+  return summaries;
+}
+
 /**
  * Inserts forecast rows in chunks to keep SQL statements at a manageable size.
  */
@@ -742,11 +823,11 @@ async function insertInBatches(records, db = pool) {
   return inserted;
 }
 
-async function insertDomainInBatches(domain, records, db = pool) {
+async function insertDomainInBatches(domain, records, db = pool, { onConflict = true } = {}) {
   let inserted = 0;
 
   for (let index = 0; index < records.length; index += MAX_BATCH_SIZE) {
-    inserted += await DomainForecastData.insertMany(domain, records.slice(index, index + MAX_BATCH_SIZE), db);
+    inserted += await DomainForecastData.insertMany(domain, records.slice(index, index + MAX_BATCH_SIZE), db, { onConflict });
   }
 
   return inserted;
@@ -1017,6 +1098,20 @@ export async function runServiceForecastWorker({
   });
 }
 
+export async function runWarrantyForecastWorker({
+  horizon = parseHorizon(process.env.FORECAST_HORIZON_MONTHS),
+  onProgress
+} = {}) {
+  return runDomainForecastWorker({
+    domain: WARRANTY_DOMAIN,
+    forecastType: WARRANTY_FORECAST_TYPE,
+    horizon,
+    fetchScopes: fetchWarrantyForecastScopes,
+    buildForecast: (scope, db) => buildWarrantyReturnsForecast({ horizon, scope, db }),
+    onProgress
+  });
+}
+
 export async function runAllForecastWorkers({
   horizon = parseHorizon(process.env.FORECAST_HORIZON_MONTHS),
   onProgress
@@ -1033,11 +1128,16 @@ export async function runAllForecastWorkers({
     horizon,
     onProgress: (progress) => reportProgress(onProgress, { ...progress, forecastDomain: SERVICE_DOMAIN })
   });
+  const warranty = await runWarrantyForecastWorker({
+    horizon,
+    onProgress: (progress) => reportProgress(onProgress, { ...progress, forecastDomain: WARRANTY_DOMAIN })
+  });
 
   return {
     sales,
     parts,
-    service
+    service,
+    warranty
   };
 }
 
@@ -1098,6 +1198,7 @@ async function runDomainForecastWorker({
     const scopes = await fetchScopes(client);
     const eventCalendar = await fetchDomainEventCalendar(domain, forecastType, client);
     const allRecords = [];
+    const allCalibrationSummaries = [];
 
     reportProgress(onProgress, {
       stage: "processing",
@@ -1127,6 +1228,12 @@ async function runDomainForecastWorker({
       for (const record of scopeRecords) {
         allRecords.push(record);
       }
+      allCalibrationSummaries.push(
+        ...collectDomainCalibrationSummaries({
+          scope,
+          forecast
+        })
+      );
 
       reportProgress(onProgress, {
         stage: "processing",
@@ -1147,19 +1254,11 @@ async function runDomainForecastWorker({
       processedScopes: scopes.length
     });
 
-    const inserted = await insertDomainInBatches(domainDataKey(domain), allRecords, client);
-    const completedRun = await ForecastRun.complete(
-      run.run_id,
-      {
-        coverage80: null,
-        coverage95: null,
-        sampleCount: 0,
-        avgWidth80: null,
-        avgWidth95: null,
-        horizonWidths: []
-      },
-      client
-    );
+    const dataDomain = domainDataKey(domain);
+    const removed = await DomainForecastData.clearFuture(dataDomain, forecastType, client);
+    const inserted = await insertDomainInBatches(dataDomain, allRecords, client, { onConflict: false });
+    const calibration = summarizeCalibration(allCalibrationSummaries);
+    const completedRun = await ForecastRun.complete(run.run_id, calibration, client);
 
     await client.query("COMMIT");
     ForecastCacheService.clear();
@@ -1169,7 +1268,8 @@ async function runDomainForecastWorker({
       stageLabel: "Finished successfully",
       message: `${domain} forecast regeneration finished successfully.`,
       inserted,
-      removed: 0,
+      removed,
+      calibration,
       totalScopes: scopes.length,
       processedScopes: scopes.length
     });
@@ -1180,7 +1280,8 @@ async function runDomainForecastWorker({
       skipped: false,
       runId: completedRun.run_id,
       inserted,
-      removed: 0,
+      removed,
+      calibration,
       scopes: scopes.length
     };
   } catch (error) {
@@ -1235,7 +1336,8 @@ if (process.argv[1] === currentFile) {
     all: runAllForecastWorkers,
     sales: runForecastWorker,
     parts: runPartsForecastWorker,
-    service: runServiceForecastWorker
+    service: runServiceForecastWorker,
+    warranty: runWarrantyForecastWorker
   };
   const runner = runnerByDomain[requestedDomain] ?? runAllForecastWorkers;
 

@@ -3,7 +3,7 @@ import { useAuth } from "../auth/AuthContext.jsx";
 import DismissibleMessage from "../components/DismissibleMessage.jsx";
 
 const eventTypes = ["Festive", "Regulatory", "Promotional", "Holiday", "Other"];
-const domains = ["Sales", "Parts", "Service"];
+const domains = ["Sales", "Parts", "Service", "Warranty"];
 const scopes = ["National", "Zone", "State", "Service Center"];
 const emptyForm = {
   forecastDomain: "Sales",
@@ -83,7 +83,8 @@ export default function ForecastEventsPage() {
     return domains.filter((domain) => {
       if (domain === "Sales") return permissions.includes("Manage Forecast");
       if (domain === "Parts") return permissions.includes("Manage Parts Forecast");
-      return permissions.includes("Manage Service Forecast");
+      if (domain === "Service") return permissions.includes("Manage Service Forecast");
+      return permissions.includes("Manage Warranty Forecast");
     });
   }, [user?.permissions]);
   const scopeOptions = form.forecastDomain === "Sales" ? scopes.filter((scope) => scope !== "Service Center") : scopes;

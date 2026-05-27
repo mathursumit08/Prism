@@ -374,7 +374,7 @@ const forecastEventSchema = {
   type: "object",
   properties: {
     eventId: { type: "integer" },
-    forecastDomain: { enum: ["Sales", "Parts", "Service"], type: "string" },
+    forecastDomain: { enum: ["Sales", "Parts", "Service", "Warranty"], type: "string" },
     forecastType: { type: "string" },
     eventCode: { type: "string" },
     eventName: { type: "string" },
@@ -394,7 +394,7 @@ const forecastEventRequestSchema = {
   type: "object",
   required: ["forecast_domain", "event_code", "event_name", "event_type", "scope", "start_date", "end_date", "uplift_pct"],
   properties: {
-    forecast_domain: { enum: ["Sales", "Parts", "Service"], type: "string" },
+    forecast_domain: { enum: ["Sales", "Parts", "Service", "Warranty"], type: "string" },
     event_code: { type: "string" },
     event_name: { type: "string" },
     event_type: { enum: ["Festive", "Regulatory", "Promotional", "Holiday", "Other"], type: "string" },

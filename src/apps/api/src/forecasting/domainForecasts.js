@@ -3,6 +3,13 @@ import { pool } from "../db.js";
 const DEFAULT_HORIZON = 6;
 const MAX_HORIZON = 24;
 const MIN_HISTORY_POINTS = 3;
+const MIN_CALIBRATION_HISTORY_POINTS = 4;
+const CALIBRATION_TOLERANCE_PERCENTAGE_POINTS = 2;
+const CALIBRATION_ADJUSTMENT_STEPS = 40;
+const SEASONAL_MIN_HISTORY_POINTS = 12;
+const SEASONAL_SHRINKAGE = 0.65;
+const MIN_SEASONAL_FACTOR = 0.65;
+const MAX_SEASONAL_FACTOR = 1.35;
 
 function clampHorizon(value) {
   const parsed = Number(value);
@@ -23,6 +30,10 @@ function addMonths(month, offset) {
   const date = new Date(`${month}T00:00:00.000Z`);
   date.setUTCMonth(date.getUTCMonth() + offset);
   return formatMonth(date);
+}
+
+function monthIndex(month) {
+  return new Date(`${month}T00:00:00.000Z`).getUTCMonth();
 }
 
 function buildMonthRange(startMonth, endMonth) {
@@ -51,6 +62,31 @@ function mean(values) {
   }
 
   return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.min(Math.max(value, minimum), maximum);
+}
+
+function quantile(values, percentile) {
+  const sorted = values.filter(Number.isFinite).sort((left, right) => left - right);
+
+  if (sorted.length === 0) {
+    return 0;
+  }
+
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(percentile * sorted.length) - 1));
+  return sorted[index];
+}
+
+function enforceNonDecreasing(values) {
+  let previous = 0;
+
+  return values.map((value) => {
+    const next = Math.max(previous, Number.isFinite(value) ? value : previous);
+    previous = next;
+    return next;
+  });
 }
 
 function errors(actuals, forecasts) {
@@ -150,16 +186,80 @@ function trendAdjustForecast(values, baseForecast) {
   return baseForecast.map((units, index) => {
     const dampening = 1 / (1 + index * 0.12);
     const trendFactor = 1 + monthlyTrend * (index + 1) * dampening;
-    return roundUnits(units * Math.max(0.35, trendFactor));
+    return Math.max(0, units * Math.max(0.35, trendFactor));
   });
 }
 
+function buildMonthlySeasonalFactors(history) {
+  const usableHistory = history.filter((point) => Number.isFinite(point.units));
+  const positiveValues = usableHistory.map((point) => point.units).filter((units) => units > 0);
+  const overallMean = mean(positiveValues);
+  const factors = Array(12).fill(1);
+
+  if (usableHistory.length < SEASONAL_MIN_HISTORY_POINTS || overallMean <= 0) {
+    return factors;
+  }
+
+  const unitsByMonth = Array.from({ length: 12 }, () => []);
+  usableHistory.forEach((point) => {
+    unitsByMonth[monthIndex(point.month)].push(point.units);
+  });
+
+  const rawFactors = unitsByMonth.map((values) => {
+    const positiveMonthValues = values.filter((units) => units > 0);
+    if (positiveMonthValues.length === 0) {
+      return 1;
+    }
+
+    const rawFactor = mean(positiveMonthValues) / overallMean;
+    return clamp(1 + (rawFactor - 1) * SEASONAL_SHRINKAGE, MIN_SEASONAL_FACTOR, MAX_SEASONAL_FACTOR);
+  });
+  const representedFactors = rawFactors.filter((factor, index) => unitsByMonth[index].length > 0);
+  const normalizationFactor = mean(representedFactors) || 1;
+
+  return rawFactors.map((factor) => clamp(factor / normalizationFactor, MIN_SEASONAL_FACTOR, MAX_SEASONAL_FACTOR));
+}
+
+function applySeasonality(point, factor) {
+  return {
+    ...point,
+    units: Math.max(0, point.units * factor),
+    lower80: Math.max(0, point.lower80 * factor),
+    upper80: Math.max(0, point.upper80 * factor),
+    lower95: Math.max(0, point.lower95 * factor),
+    upper95: Math.max(0, point.upper95 * factor)
+  };
+}
+
+function applyMonthlySeasonality(forecastPoints, history, lastMonth) {
+  const seasonalFactors = buildMonthlySeasonalFactors(history);
+  const hasSeasonality = seasonalFactors.some((factor) => Math.abs(factor - 1) > 0.01);
+
+  if (!hasSeasonality || !lastMonth) {
+    return {
+      forecast: forecastPoints,
+      applied: false
+    };
+  }
+
+  return {
+    forecast: forecastPoints.map((point, index) => {
+      const forecastMonth = addMonths(lastMonth, index + 1);
+      return applySeasonality(point, seasonalFactors[monthIndex(forecastMonth)]);
+    }),
+    applied: true
+  };
+}
+
 function fitSeries(values, horizon, preferredMethod) {
+  const fallbackCalibration = buildEmptyCalibration(horizon);
   if (values.length < MIN_HISTORY_POINTS) {
     const forecast = movingAverageForecast(values, horizon, 2);
     return {
       method: "moving-average(2)",
       forecast,
+      intervalForecast: buildForecastPoints(forecast, horizon, fallbackCalibration),
+      calibration: fallbackCalibration.calibration,
       validation: {
         mae: null,
         rmse: null,
@@ -179,26 +279,219 @@ function fitSeries(values, horizon, preferredMethod) {
   const forecast = useCroston
     ? crostonForecast(values, horizon)
     : movingAverageForecast(values, horizon, 3);
+  const validation = errors(actuals, holdoutForecast);
+  const fallbackScale = validation.rmse ?? validation.mae ?? Math.max(1, mean(values) * 0.2);
+  const intervalCalibration = buildCalibration(values, horizon, method, preferredMethod, fallbackScale);
 
   return {
     method,
     forecast,
-    validation: errors(actuals, holdoutForecast)
+    intervalForecast: buildForecastPoints(forecast, horizon, intervalCalibration),
+    calibration: intervalCalibration.calibration,
+    validation
   };
 }
 
-function buildIntervalPoint(units, validation) {
-  const scale = validation.rmse ?? validation.mae ?? Math.max(1, units * 0.2);
-  const residual80 = Math.max(1, scale);
-  const residual95 = Math.max(residual80, scale * 1.6);
+function forecastByMethod(values, horizon, method, preferredMethod) {
+  if (method === "moving-average(2)") {
+    return movingAverageForecast(values, horizon, 2);
+  }
+
+  if (method === "croston(alpha=0.2)") {
+    return crostonForecast(values, horizon);
+  }
+
+  if (method === "moving-average(3)") {
+    return movingAverageForecast(values, horizon, 3);
+  }
+
+  return preferredMethod === "croston" && hasIntermittentDemand(values)
+    ? crostonForecast(values, horizon)
+    : movingAverageForecast(values, horizon, 3);
+}
+
+function calculateCoverage(residualsByHorizon, residual80, residual95) {
+  let covered80 = 0;
+  let covered95 = 0;
+  let sampleCount = 0;
+
+  residualsByHorizon.forEach((residuals, horizonIndex) => {
+    residuals.forEach((residual) => {
+      if (residual <= residual80[horizonIndex]) {
+        covered80 += 1;
+      }
+
+      if (residual <= residual95[horizonIndex]) {
+        covered95 += 1;
+      }
+
+      sampleCount += 1;
+    });
+  });
 
   return {
-    units,
-    lower80: Math.min(units, roundUnits(units - residual80)),
-    upper80: Math.max(units, roundUnits(units + residual80)),
-    lower95: Math.min(units, roundUnits(units - residual95)),
-    upper95: Math.max(units, roundUnits(units + residual95))
+    coverage80: sampleCount > 0 ? Number(((covered80 / sampleCount) * 100).toFixed(2)) : null,
+    coverage95: sampleCount > 0 ? Number(((covered95 / sampleCount) * 100).toFixed(2)) : null,
+    sampleCount
   };
+}
+
+function isWithinCoverageTolerance(value, target) {
+  return value !== null && Math.abs(value - target) <= CALIBRATION_TOLERANCE_PERCENTAGE_POINTS;
+}
+
+function scaleResiduals(values, factor, minimums = []) {
+  return enforceNonDecreasing(
+    values.map((value, index) => Math.max(value * factor, minimums[index] ?? 0))
+  );
+}
+
+function chooseAdjustedResiduals(residualsByHorizon, baseResiduals, target, coverageKey, minimums = []) {
+  const currentCoverage = (residuals) => calculateCoverage(residualsByHorizon, residuals, residuals)[coverageKey];
+  const initialCoverage = currentCoverage(baseResiduals);
+
+  if (isWithinCoverageTolerance(initialCoverage, target)) {
+    return baseResiduals;
+  }
+
+  const isUnderCovered = initialCoverage === null || initialCoverage < target - CALIBRATION_TOLERANCE_PERCENTAGE_POINTS;
+  let low = isUnderCovered ? 1 : 0;
+  let high = isUnderCovered ? 2 : 1;
+  let bestResiduals = baseResiduals;
+  let bestDistance = initialCoverage === null ? Number.POSITIVE_INFINITY : Math.abs(initialCoverage - target);
+
+  if (isUnderCovered) {
+    for (let step = 0; step < CALIBRATION_ADJUSTMENT_STEPS; step += 1) {
+      const candidate = scaleResiduals(baseResiduals, high, minimums);
+      const coverage = currentCoverage(candidate);
+
+      if (coverage !== null && Math.abs(coverage - target) < bestDistance) {
+        bestDistance = Math.abs(coverage - target);
+        bestResiduals = candidate;
+      }
+
+      if (coverage !== null && coverage >= target - CALIBRATION_TOLERANCE_PERCENTAGE_POINTS) {
+        break;
+      }
+
+      high *= 2;
+    }
+  }
+
+  for (let step = 0; step < CALIBRATION_ADJUSTMENT_STEPS; step += 1) {
+    const factor = (low + high) / 2;
+    const candidate = scaleResiduals(baseResiduals, factor, minimums);
+    const coverage = currentCoverage(candidate);
+
+    if (coverage !== null && Math.abs(coverage - target) < bestDistance) {
+      bestDistance = Math.abs(coverage - target);
+      bestResiduals = candidate;
+    }
+
+    if (isWithinCoverageTolerance(coverage, target)) {
+      return candidate;
+    }
+
+    if (coverage === null || coverage < target) {
+      low = factor;
+    } else {
+      high = factor;
+    }
+  }
+
+  return bestResiduals;
+}
+
+function buildEmptyCalibration(horizon) {
+  return {
+    residual80: Array(horizon).fill(1),
+    residual95: Array(horizon).fill(2),
+    calibration: {
+      coverage80: null,
+      coverage95: null,
+      target80WithinTolerance: null,
+      target95WithinTolerance: null,
+      sampleCount: 0,
+      avgWidth80: null,
+      avgWidth95: null,
+      horizonWidths: Array.from({ length: horizon }, (_value, index) => ({
+        horizonMonth: index + 1,
+        width80: 0,
+        width95: 0,
+        sampleCount: 0
+      }))
+    }
+  };
+}
+
+function buildCalibration(values, horizon, method, preferredMethod, fallbackScale = 0) {
+  const residualsByHorizon = Array.from({ length: horizon }, () => []);
+  const maxHoldoutOrigins = Math.min(12, Math.max(0, values.length - MIN_CALIBRATION_HISTORY_POINTS));
+  const firstOrigin = values.length - maxHoldoutOrigins;
+
+  for (let origin = firstOrigin; origin < values.length; origin += 1) {
+    const train = values.slice(0, origin);
+    const actuals = values.slice(origin, Math.min(values.length, origin + horizon));
+
+    if (train.length < MIN_CALIBRATION_HISTORY_POINTS || actuals.length === 0) {
+      continue;
+    }
+
+    const forecast = forecastByMethod(train, actuals.length, method, preferredMethod);
+    actuals.forEach((actual, index) => {
+      residualsByHorizon[index].push(Math.abs(actual - forecast[index]));
+    });
+  }
+
+  let residual80 = residualsByHorizon.map((residuals) => quantile(residuals, 0.8));
+  let residual95 = residualsByHorizon.map((residuals) => quantile(residuals, 0.95));
+  const fallbackResidual = Math.max(1, fallbackScale);
+
+  residual80 = residual80.map((value) => (value > 0 ? value : fallbackResidual));
+  residual95 = residual95.map((value, index) => Math.max(value > 0 ? value : fallbackResidual * 1.5, residual80[index]));
+  residual80 = enforceNonDecreasing(residual80);
+  residual95 = enforceNonDecreasing(residual95);
+  residual80 = chooseAdjustedResiduals(residualsByHorizon, residual80, 80, "coverage80");
+  residual95 = chooseAdjustedResiduals(residualsByHorizon, residual95, 95, "coverage95", residual80);
+  residual95 = scaleResiduals(residual95, 1, residual80);
+  const coverage = calculateCoverage(residualsByHorizon, residual80, residual95);
+
+  const horizonWidths = residual80.map((_value, index) => ({
+    horizonMonth: index + 1,
+    width80: Number((residual80[index] * 2).toFixed(2)),
+    width95: Number((residual95[index] * 2).toFixed(2)),
+    sampleCount: residualsByHorizon[index].length
+  }));
+
+  return {
+    residual80,
+    residual95,
+    calibration: {
+      coverage80: coverage.coverage80,
+      coverage95: coverage.coverage95,
+      target80WithinTolerance: isWithinCoverageTolerance(coverage.coverage80, 80),
+      target95WithinTolerance: isWithinCoverageTolerance(coverage.coverage95, 95),
+      sampleCount: coverage.sampleCount,
+      avgWidth80: Number(mean(horizonWidths.map((item) => item.width80)).toFixed(2)),
+      avgWidth95: Number(mean(horizonWidths.map((item) => item.width95)).toFixed(2)),
+      horizonWidths
+    }
+  };
+}
+
+function buildForecastPoints(forecast, horizon, calibration) {
+  return forecast.map((units, index) => {
+    const residual80 = calibration.residual80[index] ?? 0;
+    const residual95 = calibration.residual95[index] ?? residual80;
+
+    return {
+      units,
+      lower80: Math.min(units, Math.max(0, units - residual80)),
+      upper80: Math.max(units, units + residual80),
+      lower95: Math.min(units, Math.max(0, units - residual95)),
+      upper95: Math.max(units, units + residual95)
+    };
+  });
 }
 
 function aggregateSeries(baseSeries, level) {
@@ -212,6 +505,9 @@ function aggregateSeries(baseSeries, level) {
       series.partCategory ?? "",
       series.serviceType ?? "",
       series.jobCategory ?? "",
+      series.claimType ?? "",
+      series.returnReason ?? "",
+      series.ageBucket ?? "",
       series.modelId ?? "",
       series.variantId ?? ""
     ].join("|");
@@ -399,20 +695,82 @@ function buildForecastForBaseSeries(baseSeries, horizon, preferredMethod) {
     const values = series.history.map((point) => point.units);
     const fitted = fitSeries(values, horizon, preferredMethod);
     const lastMonth = series.history[series.history.length - 1]?.month;
+    const seasonalForecast = applyMonthlySeasonality(fitted.intervalForecast, series.history, lastMonth);
 
     return {
       ...series,
       level: "service_center",
       groupId: series.serviceCenterId,
       groupLabel: series.serviceCenterName,
-      method: fitted.method,
+      method: seasonalForecast.applied ? `${fitted.method} + seasonal-index` : fitted.method,
+      calibration: fitted.calibration,
       validation: fitted.validation,
-      forecast: fitted.forecast.map((units, index) => ({
+      forecast: seasonalForecast.forecast.map((point, index) => ({
         month: addMonths(lastMonth, index + 1),
-        ...buildIntervalPoint(units, fitted.validation)
+        ...point
       }))
     };
   });
+}
+
+async function fetchWarrantyRows({ claimType, returnReason, ageBucket, modelId, variantId, historyEndMonth } = {}, db = pool) {
+  const values = [];
+  const conditions = ["sc.is_active = TRUE"];
+
+  if (claimType) {
+    values.push(claimType);
+    conditions.push(`mwv.claim_type = $${values.length}`);
+  }
+
+  if (returnReason) {
+    values.push(returnReason);
+    conditions.push(`mwv.return_reason = $${values.length}`);
+  }
+
+  if (ageBucket) {
+    values.push(ageBucket);
+    conditions.push(`mwv.age_bucket = $${values.length}`);
+  }
+
+  if (modelId) {
+    values.push(modelId);
+    conditions.push(`mwv.model_id = $${values.length}`);
+  }
+
+  if (variantId) {
+    values.push(variantId);
+    conditions.push(`mwv.variant_id = $${values.length}`);
+  }
+
+  if (historyEndMonth) {
+    values.push(historyEndMonth);
+    conditions.push(`mwv.month <= $${values.length}::DATE`);
+  }
+
+  const result = await db.query(
+    `
+      SELECT
+        sc.service_center_id,
+        sc.service_center_name,
+        sc.state,
+        sc.region,
+        mwv.claim_type,
+        mwv.return_reason,
+        mwv.age_bucket,
+        mwv.model_id,
+        mwv.variant_id,
+        TO_CHAR(mwv.month, 'YYYY-MM-01') AS month,
+        SUM(mwv.claim_count + mwv.return_count)::INTEGER AS units
+      FROM monthly_warranty_return_volume mwv
+      JOIN service_centers sc ON sc.service_center_id = mwv.service_center_id
+      WHERE ${conditions.join(" AND ")}
+      GROUP BY sc.service_center_id, sc.service_center_name, sc.state, sc.region, mwv.claim_type, mwv.return_reason, mwv.age_bucket, mwv.model_id, mwv.variant_id, mwv.month
+      ORDER BY sc.service_center_id, mwv.claim_type, mwv.return_reason, mwv.age_bucket, mwv.month
+    `,
+    values
+  );
+
+  return result.rows;
 }
 
 export async function buildPartsDemandForecast({ horizon, scope = {}, db = pool } = {}) {
@@ -465,6 +823,45 @@ export async function buildServiceOrderForecast({ horizon, scope = {}, db = pool
       zone: row.region,
       serviceType: row.service_type,
       jobCategory: row.job_category,
+      modelId: row.model_id,
+      variantId: row.variant_id
+    })
+  });
+  const serviceCenterSeries = buildForecastForBaseSeries(baseSeries, safeHorizon, "moving-average");
+
+  return {
+    horizon: safeHorizon,
+    scope,
+    levels: [
+      {
+        level: "service_center",
+        series: serviceCenterSeries
+      },
+      {
+        level: "state",
+        series: aggregateSeries(serviceCenterSeries, "state")
+      },
+      {
+        level: "zone",
+        series: aggregateSeries(serviceCenterSeries, "zone")
+      }
+    ]
+  };
+}
+
+export async function buildWarrantyReturnsForecast({ horizon, scope = {}, db = pool } = {}) {
+  const safeHorizon = clampHorizon(horizon);
+  const rows = await fetchWarrantyRows(scope, db);
+  const baseSeries = rowsToSeries(rows, {
+    buildKey: (row) => [row.service_center_id, row.claim_type ?? "", row.return_reason ?? "", row.age_bucket ?? "", row.model_id ?? "", row.variant_id ?? ""].join("|"),
+    buildIdentity: (row) => ({
+      serviceCenterId: row.service_center_id,
+      serviceCenterName: row.service_center_name,
+      state: row.state,
+      zone: row.region,
+      claimType: row.claim_type,
+      returnReason: row.return_reason,
+      ageBucket: row.age_bucket,
       modelId: row.model_id,
       variantId: row.variant_id
     })

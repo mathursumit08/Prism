@@ -220,7 +220,6 @@ export default function ManageForecastPage({
 
   useEffect(() => {
     let isMounted = true;
-    let intervalId = null;
 
     async function loadStatus() {
       try {
@@ -254,7 +253,48 @@ export default function ManageForecastPage({
     }
 
     loadStatus();
-    intervalId = window.setInterval(loadStatus, adminState.data?.generation?.running ? 2000 : 15000);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [adminBasePath, apiFetch]);
+
+  useEffect(() => {
+    if (!adminState.data?.generation?.running) {
+      return undefined;
+    }
+
+    let isMounted = true;
+    const intervalId = window.setInterval(async () => {
+      try {
+        const response = await apiFetch(`${adminBasePath}/status`);
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || "Unable to load forecast admin status.");
+        }
+
+        if (!isMounted) {
+          return;
+        }
+
+        setAdminState({
+          loading: false,
+          error: "",
+          data: payload
+        });
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setAdminState((current) => ({
+          loading: false,
+          error: error.message || "Unable to load forecast admin status.",
+          data: current.data
+        }));
+      }
+    }, 2000);
 
     return () => {
       isMounted = false;

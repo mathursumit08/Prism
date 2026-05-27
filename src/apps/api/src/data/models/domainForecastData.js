@@ -54,6 +54,34 @@ const tableConfigs = {
       "data_quality"
     ],
     conflictColumns: ["forecast_type", "level", "group_id", "service_type", "job_category", "model_id", "variant_id", "forecast_month"]
+  },
+  warranty: {
+    tableName: "warranty_forecast_data",
+    unitColumn: "forecast_units",
+    columns: [
+      "run_id",
+      "forecast_type",
+      "level",
+      "group_id",
+      "group_label",
+      "claim_type",
+      "return_reason",
+      "age_bucket",
+      "model_id",
+      "variant_id",
+      "forecast_month",
+      "forecast_units",
+      "lower_80",
+      "upper_80",
+      "lower_95",
+      "upper_95",
+      "model_method",
+      "validation_mae",
+      "validation_rmse",
+      "validation_mape",
+      "data_quality"
+    ],
+    conflictColumns: ["forecast_type", "level", "group_id", "claim_type", "return_reason", "age_bucket", "model_id", "variant_id", "forecast_month"]
   }
 };
 
@@ -77,6 +105,9 @@ function toColumnValue(record, column, unitField) {
     part_category: record.partCategory,
     service_type: record.serviceType,
     job_category: record.jobCategory,
+    claim_type: record.claimType,
+    return_reason: record.returnReason,
+    age_bucket: record.ageBucket,
     model_id: record.modelId,
     variant_id: record.variantId,
     forecast_month: record.forecastMonth,
@@ -101,7 +132,7 @@ function toColumnValue(record, column, unitField) {
 }
 
 export const DomainForecastData = {
-  async insertMany(domain, records, db = pool) {
+  async insertMany(domain, records, db = pool, { onConflict = true } = {}) {
     if (records.length === 0) {
       return 0;
     }
@@ -116,15 +147,20 @@ export const DomainForecastData = {
     });
     const updateColumns = config.columns.filter((column) => !config.conflictColumns.includes(column));
     const updateSet = updateColumns.map((column) => `${column} = EXCLUDED.${column}`).join(", ");
+    const conflictSql = onConflict
+      ? `
+        ON CONFLICT (${config.conflictColumns.join(", ")})
+        DO UPDATE SET
+          ${updateSet},
+          generated_at = NOW()
+      `
+      : "";
 
     await db.query(
       `
         INSERT INTO ${config.tableName} (${config.columns.join(", ")})
         VALUES ${placeholders.join(", ")}
-        ON CONFLICT (${config.conflictColumns.join(", ")})
-        DO UPDATE SET
-          ${updateSet},
-          generated_at = NOW()
+        ${conflictSql}
       `,
       values
     );
@@ -148,7 +184,11 @@ export const DomainForecastData = {
 
   async clearFuture(domain, forecastType, db = pool) {
     const config = getConfig(domain);
-    const sourceTable = domain === "parts" ? "monthly_service_parts_demand" : "monthly_service_order_volume";
+    const sourceTable = domain === "parts"
+      ? "monthly_service_parts_demand"
+      : domain === "service"
+        ? "monthly_service_order_volume"
+        : "monthly_warranty_return_volume";
     const monthColumn = "month";
     const result = await db.query(
       `

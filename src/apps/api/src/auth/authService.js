@@ -73,11 +73,13 @@ async function loadUserAccessScopes(username) {
     if (legacyUser.service_center_id) {
       scopes.push({ domain: "Parts", scope_type: "Service Center", scope_value: legacyUser.service_center_id });
       scopes.push({ domain: "Service", scope_type: "Service Center", scope_value: legacyUser.service_center_id });
+      scopes.push({ domain: "Warranty", scope_type: "Service Center", scope_value: legacyUser.service_center_id });
     }
     if (legacyUser.region && legacyUser.role_name === "Regional Head") {
       scopes.push({ domain: "Sales", scope_type: "Region", scope_value: legacyUser.region });
       scopes.push({ domain: "Parts", scope_type: "Region", scope_value: legacyUser.region });
       scopes.push({ domain: "Service", scope_type: "Region", scope_value: legacyUser.region });
+      scopes.push({ domain: "Warranty", scope_type: "Region", scope_value: legacyUser.region });
     }
 
     return scopes;

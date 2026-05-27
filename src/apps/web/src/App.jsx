@@ -45,12 +45,28 @@ function resolvePageFromHash(hash) {
     return "service-dashboard";
   }
 
+  if (hash === "#warranty-dashboard") {
+    return "warranty-dashboard";
+  }
+
+  if (
+    hash === "#warranty-dashboard-diagnostics" ||
+    hash === "#warranty-dashboard-leaderboard" ||
+    hash === "#warranty-dashboard-data"
+  ) {
+    return "warranty-dashboard";
+  }
+
   if (hash === "#parts-forecast-admin") {
     return "parts-forecast-admin";
   }
 
   if (hash === "#service-forecast-admin") {
     return "service-forecast-admin";
+  }
+
+  if (hash === "#warranty-forecast-admin") {
+    return "warranty-forecast-admin";
   }
 
   if (hash === "#forecast-events") {
@@ -74,24 +90,32 @@ const forecastNavDefinitions = [
 ];
 
 const partsNavDefinitions = [
-  { hash: "#parts-dashboard", label: "Monitor", cards: ["trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
+  { hash: "#parts-dashboard", label: "Forecast Monitor", cards: ["trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
   { hash: "#parts-dashboard-diagnostics", label: "Diagnostics", cards: ["accuracyTrend", "biasTrend", "actualPredicted", "errorDistribution"] },
   { hash: "#parts-dashboard-leaderboard", label: "Leaderboard", cards: ["leaderboard"] },
   { hash: "#parts-dashboard-data", label: "Forecast Data", cards: ["segmentBreakdown", "forecastData"] }
 ];
 
 const serviceNavDefinitions = [
-  { hash: "#service-dashboard", label: "Monitor", cards: ["trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
+  { hash: "#service-dashboard", label: "Forecast Monitor", cards: ["trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
   { hash: "#service-dashboard-diagnostics", label: "Diagnostics", cards: ["accuracyTrend", "biasTrend", "actualPredicted", "errorDistribution"] },
   { hash: "#service-dashboard-leaderboard", label: "Leaderboard", cards: ["leaderboard"] },
   { hash: "#service-dashboard-data", label: "Forecast Data", cards: ["segmentBreakdown", "forecastData"] }
+];
+
+const warrantyNavDefinitions = [
+  { hash: "#warranty-dashboard", label: "Forecast Monitor", cards: ["trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
+  { hash: "#warranty-dashboard-diagnostics", label: "Diagnostics", cards: ["accuracyTrend", "biasTrend", "actualPredicted", "errorDistribution"] },
+  { hash: "#warranty-dashboard-leaderboard", label: "Leaderboard", cards: ["leaderboard"] },
+  { hash: "#warranty-dashboard-data", label: "Forecast Data", cards: ["segmentBreakdown", "forecastData"] }
 ];
 
 function createDefaultDashboardCardVisibilityByDomain() {
   return {
     Sales: { ...defaultDashboardCardVisibility },
     Parts: { ...defaultDashboardCardVisibility },
-    Service: { ...defaultDashboardCardVisibility }
+    Service: { ...defaultDashboardCardVisibility },
+    Warranty: { ...defaultDashboardCardVisibility }
   };
 }
 
@@ -181,10 +205,12 @@ export default function App() {
   const canViewForecast = user?.permissions?.includes("View Forecast");
   const canViewPartsForecast = user?.permissions?.includes("View Parts Forecast");
   const canViewServiceForecast = user?.permissions?.includes("View Service Forecast");
+  const canViewWarrantyForecast = user?.permissions?.includes("View Warranty Forecast");
   const canManageForecast = user?.permissions?.includes("Manage Forecast");
   const canManagePartsForecast = user?.permissions?.includes("Manage Parts Forecast");
   const canManageServiceForecast = user?.permissions?.includes("Manage Service Forecast");
-  const canManageAnyForecast = Boolean(canManageForecast || canManagePartsForecast || canManageServiceForecast);
+  const canManageWarrantyForecast = user?.permissions?.includes("Manage Warranty Forecast");
+  const canManageAnyForecast = Boolean(canManageForecast || canManagePartsForecast || canManageServiceForecast || canManageWarrantyForecast);
   const hasAnyPermission = Boolean(user?.permissions?.length);
   const isAdmin = user?.role === "Admin";
   const isServiceManager = user?.role === "Service Manager";
@@ -192,9 +218,11 @@ export default function App() {
   const hasSalesScope = hasDomainScope(user, "Sales");
   const hasPartsScope = hasDomainScope(user, "Parts");
   const hasServiceScope = hasDomainScope(user, "Service");
+  const hasWarrantyScope = hasDomainScope(user, "Warranty");
   const canAccessSalesDashboard = Boolean(canViewForecast && hasSalesScope);
   const canAccessPartsDashboard = Boolean(canViewPartsForecast && hasPartsScope);
   const canAccessServiceDashboard = Boolean(canViewServiceForecast && hasServiceScope);
+  const canAccessWarrantyDashboard = Boolean(canViewWarrantyForecast && hasWarrantyScope);
   const usesForecastHome = Boolean(user && canAccessSalesDashboard);
   const visibleForecastNavItems = useMemo(
     () =>
@@ -211,6 +239,10 @@ export default function App() {
     () => (canAccessServiceDashboard ? filterVisibleNavItems(serviceNavDefinitions, dashboardCardVisibilityByDomain.Service) : []),
     [canAccessServiceDashboard, dashboardCardVisibilityByDomain]
   );
+  const visibleWarrantyNavItems = useMemo(
+    () => (canAccessWarrantyDashboard ? filterVisibleNavItems(warrantyNavDefinitions, dashboardCardVisibilityByDomain.Warranty) : []),
+    [canAccessWarrantyDashboard, dashboardCardVisibilityByDomain]
+  );
   const canUseForecastDashboard = usesForecastHome && visibleForecastNavItems.length > 0;
   const fallbackPage = isPartsManager && canAccessPartsDashboard
     ? "parts-dashboard"
@@ -222,7 +254,9 @@ export default function App() {
           ? "service-dashboard"
           : canAccessPartsDashboard
             ? "parts-dashboard"
-            : "home";
+            : canAccessWarrantyDashboard
+              ? "warranty-dashboard"
+              : "home";
 
   useEffect(() => {
     function handleHashChange() {
@@ -236,7 +270,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated || (!canAccessSalesDashboard && !canAccessPartsDashboard && !canAccessServiceDashboard)) {
+    if (!isAuthenticated || (!canAccessSalesDashboard && !canAccessPartsDashboard && !canAccessServiceDashboard && !canAccessWarrantyDashboard)) {
       setDashboardCardVisibilityByDomain(createDefaultDashboardCardVisibilityByDomain());
       return undefined;
     }
@@ -271,15 +305,17 @@ export default function App() {
       controller.abort();
       window.removeEventListener("dashboard-card-settings-changed", loadDashboardCardVisibility);
     };
-  }, [apiFetch, canAccessSalesDashboard, canAccessPartsDashboard, canAccessServiceDashboard, isAuthenticated]);
+  }, [apiFetch, canAccessSalesDashboard, canAccessPartsDashboard, canAccessServiceDashboard, canAccessWarrantyDashboard, isAuthenticated]);
 
   function navigate(nextPage) {
     const hashByPage = {
       admin: "admin",
       "parts-dashboard": "parts-dashboard",
       "service-dashboard": "service-dashboard",
+      "warranty-dashboard": "warranty-dashboard",
       "parts-forecast-admin": "parts-forecast-admin",
       "service-forecast-admin": "service-forecast-admin",
+      "warranty-forecast-admin": "warranty-forecast-admin",
       "forecast-events": "forecast-events",
       "dashboard-cards": "dashboard-cards",
       home: "home"
@@ -324,12 +360,22 @@ export default function App() {
       return;
     }
 
+    if (page === "warranty-dashboard" && !canAccessWarrantyDashboard) {
+      navigate(fallbackPage);
+      return;
+    }
+
     if (page === "parts-forecast-admin" && !canManagePartsForecast) {
       navigate(fallbackPage);
       return;
     }
 
     if (page === "service-forecast-admin" && !canManageServiceForecast) {
+      navigate(fallbackPage);
+      return;
+    }
+
+    if (page === "warranty-forecast-admin" && !canManageWarrantyForecast) {
       navigate(fallbackPage);
       return;
     }
@@ -365,7 +411,15 @@ export default function App() {
         window.location.hash = visibleServiceNavItems[0]?.hash || "#home";
       }
     }
-  }, [canAccessPartsDashboard, canAccessServiceDashboard, canManageAnyForecast, canManageForecast, canManagePartsForecast, canManageServiceForecast, currentHash, fallbackPage, hasAnyPermission, isAdmin, isAuthenticated, page, user, usesForecastHome, visibleForecastNavItems, visiblePartsNavItems, visibleServiceNavItems]);
+
+    if (page === "warranty-dashboard") {
+      const currentWarrantyItem = warrantyNavDefinitions.find((item) => item.hash === currentHash);
+      const currentWarrantyItemVisible = visibleWarrantyNavItems.some((item) => item.hash === currentHash);
+      if (currentWarrantyItem && !currentWarrantyItemVisible) {
+        window.location.hash = visibleWarrantyNavItems[0]?.hash || "#home";
+      }
+    }
+  }, [canAccessPartsDashboard, canAccessServiceDashboard, canAccessWarrantyDashboard, canManageAnyForecast, canManageForecast, canManagePartsForecast, canManageServiceForecast, canManageWarrantyForecast, currentHash, fallbackPage, hasAnyPermission, isAdmin, isAuthenticated, page, user, usesForecastHome, visibleForecastNavItems, visiblePartsNavItems, visibleServiceNavItems, visibleWarrantyNavItems]);
 
   if (booting) {
     return (
@@ -385,10 +439,12 @@ export default function App() {
   const forecastNavItems = canUseForecastDashboard ? visibleForecastNavItems : [];
   const partsNavItems = visiblePartsNavItems;
   const serviceNavItems = visibleServiceNavItems;
+  const warrantyNavItems = visibleWarrantyNavItems;
   const manageNavItems = [
-    ...(canManageForecast ? [{ hash: "#admin", label: "Manage Forecast" }] : []),
+    ...(canManageForecast ? [{ hash: "#admin", label: "Sales Forecast" }] : []),
     ...(canManagePartsForecast ? [{ hash: "#parts-forecast-admin", label: "Parts Forecast" }] : []),
     ...(canManageServiceForecast ? [{ hash: "#service-forecast-admin", label: "Service Forecast" }] : []),
+    ...(canManageWarrantyForecast ? [{ hash: "#warranty-forecast-admin", label: "Warranty Forecast" }] : []),
     ...(canManageAnyForecast ? [{ hash: "#forecast-events", label: "Forecast Events" }] : []),
     ...(isAdmin ? [{ hash: "#dashboard-cards", label: "Dashboard Cards" }] : [])
   ];
@@ -464,6 +520,25 @@ export default function App() {
               </>
             )}
 
+            {warrantyNavItems.length > 0 && (
+              <>
+                <p>Warranty Dashboard</p>
+                {warrantyNavItems.map((item) => (
+                  <a
+                    key={item.hash}
+                    className={currentHash === item.hash || (!currentHash && item.hash === "#warranty-dashboard") ? "active" : ""}
+                    href={item.hash}
+                    onClick={() => {
+                      setCurrentHash(item.hash);
+                      setPage(resolvePageFromHash(item.hash));
+                    }}
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </>
+            )}
+
             {manageNavItems.length > 0 && (
               <>
                 <p>Manage</p>
@@ -508,6 +583,8 @@ export default function App() {
           <DomainForecast key="parts-dashboard" domain="parts" />
         ) : page === "service-dashboard" && canAccessServiceDashboard ? (
           <DomainForecast key="service-dashboard" domain="service" />
+        ) : page === "warranty-dashboard" && canAccessWarrantyDashboard ? (
+          <DomainForecast key="warranty-dashboard" domain="warranty" />
         ) : page === "admin" && canManageForecast ? (
           <ManageForecast />
         ) : page === "parts-forecast-admin" && canManagePartsForecast ? (
@@ -527,6 +604,15 @@ export default function App() {
             description="Review service run health, clear future output, and launch order-volume forecast regeneration for capacity planning."
             regenerateLabel="Regenerate service forecast"
             clearLabel="Clear future service forecast rows"
+          />
+        ) : page === "warranty-forecast-admin" && canManageWarrantyForecast ? (
+          <ManageForecast
+            domain="warranty"
+            eyebrow="Warranty Forecast Administration"
+            title="Manage warranty and returns forecasting."
+            description="Review warranty run health, clear future output, and launch warranty/returns forecast regeneration."
+            regenerateLabel="Regenerate warranty forecast"
+            clearLabel="Clear future warranty forecast rows"
           />
         ) : page === "forecast-events" && canManageAnyForecast ? (
           <ForecastEvents />
