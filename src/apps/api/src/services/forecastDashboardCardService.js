@@ -3,6 +3,14 @@ import { pool } from "../db.js";
 export const dashboardCardDomains = ["Sales", "Parts", "Service", "Warranty"];
 
 const baseCards = [
+  { key: "salesForecastAccuracy", label: "Forecast Accuracy %", category: "KPIs", displayOrder: 1, domains: ["Sales"] },
+  { key: "salesActualsVsForecast", label: "Sales Actuals vs Forecast", category: "KPIs", displayOrder: 2, domains: ["Sales"] },
+  { key: "salesForecastBias", label: "Forecast Bias %", category: "KPIs", displayOrder: 3, domains: ["Sales"] },
+  { key: "inventoryCoverage", label: "Inventory Coverage", category: "KPIs", displayOrder: 4, domains: ["Sales"] },
+  { key: "fillRate", label: "Fill Rate - Parts availability vs demand", category: "KPIs", displayOrder: 1, domains: ["Parts"] },
+  { key: "mttr", label: "MTTR - Mean time to repair", category: "KPIs", displayOrder: 1, domains: ["Service"] },
+  { key: "returnRate", label: "Return Rate %", category: "KPIs", displayOrder: 1, domains: ["Warranty"] },
+  { key: "serviceCostActualVsForecast", label: "Service Cost - Actuals vs Forecast", category: "KPIs", displayOrder: 2, domains: ["Parts", "Service", "Warranty"] },
   { key: "trend", label: "Trend - Actual vs Forecast trend", category: "Graphs", displayOrder: 1 },
   { key: "segmentSplit", label: "Segment split - Forecast by segment", category: "Graphs", displayOrder: 2 },
   { key: "accuracyTrend", label: "Accuracy - MAPE / MAE / RMSE trend", category: "Graphs", displayOrder: 3 },
@@ -34,11 +42,13 @@ const domainLabelOverrides = {
 };
 
 export const dashboardCards = dashboardCardDomains.flatMap((domain) =>
-  baseCards.map((card) => ({
-    ...card,
-    domain,
-    label: domainLabelOverrides[domain]?.[card.key] || card.label
-  }))
+  baseCards
+    .filter((card) => !card.domains || card.domains.includes(domain))
+    .map((card) => ({
+      ...card,
+      domain,
+      label: domainLabelOverrides[domain]?.[card.key] || card.label
+    }))
 );
 
 const dashboardCardKeys = new Set(baseCards.map((card) => card.key));
@@ -145,7 +155,7 @@ export const ForecastDashboardCardService = {
         throw createHttpError(400, `Unsupported dashboard card domain "${card.domain}"`);
       }
 
-      if (!dashboardCardKeys.has(card.key)) {
+      if (!dashboardCardKeys.has(card.key) || !getDefinition(domain, card.key)) {
         throw createHttpError(400, `Unsupported dashboard card "${card.key}"`);
       }
     }

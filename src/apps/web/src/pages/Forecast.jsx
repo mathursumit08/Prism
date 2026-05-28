@@ -22,6 +22,14 @@ const forecastModes = [
 
 export const defaultDashboardCardVisibility = Object.freeze({
   // Defaults keep the dashboard usable if the card settings API is unavailable.
+  fillRate: true,
+  mttr: true,
+  returnRate: true,
+  serviceCostActualVsForecast: true,
+  salesForecastAccuracy: true,
+  salesActualsVsForecast: true,
+  salesForecastBias: true,
+  inventoryCoverage: true,
   trend: true,
   segmentSplit: true,
   accuracyTrend: true,
@@ -870,6 +878,16 @@ function AccuracyLeaderboard({ rows }) {
   );
 }
 
+function KpiMetric({ label, value, detail }) {
+  return (
+    <article className="kpi-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <p>{detail}</p>
+    </article>
+  );
+}
+
 export default function ForecastPage() {
   const { apiFetch, user } = useAuth();
   const availableLevels = forecastLevels.filter((option) => user.forecastLevels.includes(option.value));
@@ -917,6 +935,11 @@ export default function ForecastPage() {
     observations: [],
     histogram: [],
     leaderboard: []
+  });
+  const [kpiState, setKpiState] = useState({
+    loading: false,
+    error: "",
+    kpis: {}
   });
   const [dashboardCardState, setDashboardCardState] = useState({
     loading: true,
@@ -1268,6 +1291,63 @@ export default function ForecastPage() {
   useEffect(() => {
     const controller = new AbortController();
 
+    async function loadKpis() {
+      if (activeSection !== "overview") {
+        setKpiState({ loading: false, error: "", kpis: {} });
+        return;
+      }
+
+      setKpiState({ loading: true, error: "", kpis: {} });
+
+      try {
+        const params = new URLSearchParams();
+        params.set("level", level);
+        params.set("startDate", currentMonthStart);
+        params.set("horizon", String(horizonMonths));
+
+        if (groupId) {
+          params.set("groupId", groupId);
+        }
+
+        if (segment) {
+          params.set("segment", segment);
+        }
+
+        if (modelId) {
+          params.set("modelId", modelId);
+        }
+
+        if (variantId) {
+          params.set("variantId", variantId);
+        }
+
+        const response = await apiFetch(`/api/v1/forecasts/kpis?${params}`, {
+          signal: controller.signal
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || "Unable to load Sales KPI data.");
+        }
+
+        setKpiState({ loading: false, error: "", kpis: payload.kpis || {} });
+      } catch (error) {
+        if (error.name === "AbortError") {
+          return;
+        }
+
+        setKpiState({ loading: false, error: error.message || "Unable to load Sales KPI data.", kpis: {} });
+      }
+    }
+
+    loadKpis();
+
+    return () => controller.abort();
+  }, [activeSection, apiFetch, currentMonthStart, groupId, horizonMonths, level, segment, modelId, variantId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
     async function loadDiagnostics() {
       setDiagnosticsState({
         loading: true,
@@ -1398,6 +1478,7 @@ export default function ForecastPage() {
   const showAccuracyDiagnostics = cards.accuracyTrend || cards.biasTrend;
   const showErrorDiagnostics = cards.actualPredicted || cards.errorDistribution;
   const showIntervalControls = cards.forecastGraph || cards.regionalSegmentSplit || cards.segmentBreakdown;
+  const showSalesKpis = cards.salesForecastAccuracy || cards.salesActualsVsForecast || cards.salesForecastBias || cards.inventoryCoverage;
   const activeLevelLabel = availableLevels.find((item) => item.value === level)?.label || "Group";
   const activeSectionLabel = {
     overview: "Forecast Monitor",
@@ -1611,6 +1692,11 @@ export default function ForecastPage() {
           {dashboardCardState.error}
         </DismissibleMessage>
       )}
+      {kpiState.error && !dismissedMessages.kpiError && (
+        <DismissibleMessage onClose={() => dismissMessage("kpiError")}>
+          {kpiState.error}
+        </DismissibleMessage>
+      )}
 
       {activeSection === "overview" && (
       <section className="summary-grid forecast-summary-grid forecast-ops-summary" aria-label="Forecast summary">
@@ -1658,6 +1744,39 @@ export default function ForecastPage() {
           <strong>{hasForecastData ? visibleSeries.length : 0}</strong>
           <p>{activeLevelLabel.toLowerCase()} rows matching filters</p>
         </article>
+      </section>
+      )}
+
+      {activeSection === "overview" && showSalesKpis && (
+      <section className="forecast-kpi-band sales-kpi-band" aria-label="Sales KPI summary">
+        {cards.salesForecastAccuracy && (
+          <KpiMetric
+            label="Forecast Accuracy %"
+            value={kpiState.loading ? "Loading" : formatPercent(kpiState.kpis.salesForecastAccuracy?.value)}
+            detail={kpiState.kpis.salesForecastAccuracy?.mape === null || kpiState.kpis.salesForecastAccuracy?.mape === undefined ? "MAPE baseline pending" : `MAPE ${formatPercent(kpiState.kpis.salesForecastAccuracy?.mape)}`}
+          />
+        )}
+        {cards.salesActualsVsForecast && (
+          <KpiMetric
+            label="Sales Actuals vs Forecast"
+            value={kpiState.loading ? "Loading" : formatPercent(kpiState.kpis.salesActualsVsForecast?.value)}
+            detail={`${formatUnits(kpiState.kpis.salesActualsVsForecast?.actual)} actual of ${formatUnits(kpiState.kpis.salesActualsVsForecast?.forecast)} forecast`}
+          />
+        )}
+        {cards.salesForecastBias && (
+          <KpiMetric
+            label="Forecast Bias %"
+            value={kpiState.loading ? "Loading" : formatPercent(kpiState.kpis.salesForecastBias?.value)}
+            detail="Positive indicates forecast above recent actuals"
+          />
+        )}
+        {cards.inventoryCoverage && (
+          <KpiMetric
+            label="Inventory Coverage"
+            value={kpiState.loading ? "Loading" : `${formatDecimal(kpiState.kpis.inventoryCoverage?.value)} days`}
+            detail={`${formatUnits(kpiState.kpis.inventoryCoverage?.stockAvailable)} stock available in recent sales data`}
+          />
+        )}
       </section>
       )}
 
