@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { pool } from "../db.js";
 import { buildBaselineForecast } from "../forecasting/baselineForecast.js";
 import { buildPartsDemandForecast, buildServiceOrderForecast, buildWarrantyReturnsForecast } from "../forecasting/domainForecasts.js";
-import { DomainForecastData, ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
+import { DomainForecastData, DomainForecastRollup, ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
 import { ForecastCacheService } from "../services/forecastCacheService.js";
 import { ForecastBiasService } from "../services/forecastBiasService.js";
 
@@ -427,22 +427,21 @@ function nextMidnightDelay(now = new Date()) {
  * Builds all forecast scopes: overall, model-level, and variant-level forecasts.
  */
 async function fetchForecastScopes(db = pool) {
-  const [segmentsResult, modelsResult, variantsResult] = await Promise.all([
-    db.query(`
+  const segmentsResult = await db.query(`
       SELECT DISTINCT segment
       FROM vehicle_models
       WHERE is_active = TRUE
         AND is_discontinued = FALSE
       ORDER BY segment
-    `),
-    db.query(`
+    `);
+  const modelsResult = await db.query(`
       SELECT model_id, segment
       FROM vehicle_models
       WHERE is_active = TRUE
         AND is_discontinued = FALSE
       ORDER BY segment, model_id
-    `),
-    db.query(`
+    `);
+  const variantsResult = await db.query(`
       SELECT vv.model_id, vv.variant_id, vm.segment
       FROM vehicle_variants vv
       JOIN vehicle_models vm ON vm.model_id = vv.model_id
@@ -451,8 +450,7 @@ async function fetchForecastScopes(db = pool) {
         AND vm.is_active = TRUE
         AND vm.is_discontinued = FALSE
       ORDER BY vm.segment, vv.model_id, vv.variant_id
-    `)
-  ]);
+    `);
 
   return [
     {
@@ -1257,6 +1255,11 @@ async function runDomainForecastWorker({
     const dataDomain = domainDataKey(domain);
     const removed = await DomainForecastData.clearFuture(dataDomain, forecastType, client);
     const inserted = await insertDomainInBatches(dataDomain, allRecords, client, { onConflict: false });
+    await DomainForecastRollup.refresh({
+      forecastDomain: domain,
+      runId: run.run_id,
+      forecastType
+    }, client);
     const calibration = summarizeCalibration(allCalibrationSummaries);
     const completedRun = await ForecastRun.complete(run.run_id, calibration, client);
 
