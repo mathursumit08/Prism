@@ -42,6 +42,16 @@ function formatUnits(value) {
   return new Intl.NumberFormat("en-IN").format(Math.round(value || 0));
 }
 
+function formatCurrency(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "N/A";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+    notation: Math.abs(Number(value)) >= 100000 ? "compact" : "standard"
+  }).format(Number(value));
+}
+
 function formatDecimal(value, digits = 1) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return "N/A";
   return Number(value).toFixed(digits);
@@ -632,6 +642,16 @@ function Leaderboard({ rows, unitLabel }) {
   );
 }
 
+function KpiMetric({ label, value, detail }) {
+  return (
+    <article className="kpi-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <p>{detail}</p>
+    </article>
+  );
+}
+
 export default function DomainForecastPage({ domain }) {
   const { apiFetch, user } = useAuth();
   const isParts = domain === "parts";
@@ -669,6 +689,7 @@ export default function DomainForecastPage({ domain }) {
   const [actualState, setActualState] = useState({ loading: true, error: "", series: [] });
   const [breakdownState, setBreakdownState] = useState({ loading: true, error: "", series: [] });
   const [diagnosticsState, setDiagnosticsState] = useState({ loading: true, error: "", trend: [], observations: [], buckets: [], leaderboard: [] });
+  const [kpiState, setKpiState] = useState({ loading: true, error: "", kpis: {} });
   const [dashboardCardState, setDashboardCardState] = useState({
     loading: true,
     error: "",
@@ -826,6 +847,46 @@ export default function DomainForecastPage({ domain }) {
 
   useEffect(() => {
     const controller = new AbortController();
+    async function loadKpis() {
+      if (activeSection !== "monitor") {
+        setKpiState({ loading: false, error: "", kpis: {} });
+        return;
+      }
+
+      setKpiState({ loading: true, error: "", kpis: {} });
+      try {
+        const params = new URLSearchParams();
+        params.set("level", level);
+        params.set("startDate", currentMonthStart);
+        params.set("horizon", String(horizonMonths));
+        if (groupId) params.set("groupId", groupId);
+        if (isParts) {
+          if (partCategory) params.set("partCategory", partCategory);
+          if (partId) params.set("partId", partId);
+        } else if (isWarranty) {
+          if (claimType) params.set("claimType", claimType);
+          if (returnReason) params.set("returnReason", returnReason);
+          if (ageBucket) params.set("ageBucket", ageBucket);
+        } else {
+          if (serviceType) params.set("serviceType", serviceType);
+          if (jobCategory) params.set("jobCategory", jobCategory);
+        }
+
+        const response = await apiFetch(`/api/v1/forecasts/${domain}/kpis?${params}`, { signal: controller.signal });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Unable to load KPI data.");
+        setKpiState({ loading: false, error: "", kpis: payload.kpis || {} });
+      } catch (error) {
+        if (error.name === "AbortError") return;
+        setKpiState({ loading: false, error: error.message || "Unable to load KPI data.", kpis: {} });
+      }
+    }
+    loadKpis();
+    return () => controller.abort();
+  }, [activeSection, ageBucket, apiFetch, claimType, currentMonthStart, domain, groupId, horizonMonths, isParts, isWarranty, jobCategory, level, partCategory, partId, returnReason, serviceType]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     async function loadBreakdown() {
       if (activeSection !== "monitor" && activeSection !== "data") {
         setBreakdownState({ loading: false, error: "", series: [] });
@@ -935,6 +996,16 @@ export default function DomainForecastPage({ domain }) {
   const showForecastCharts = cards.forecastGraph || cards.regionalSegmentSplit;
   const showAccuracyDiagnostics = cards.accuracyTrend || cards.biasTrend;
   const showErrorDiagnostics = cards.actualPredicted || cards.errorDistribution;
+  const showAftersalesKpis =
+    (isParts && cards.fillRate) ||
+    (!isParts && !isWarranty && cards.mttr) ||
+    (isWarranty && cards.returnRate) ||
+    cards.serviceCostActualVsForecast;
+  const costKpi = kpiState.kpis.serviceCostActualVsForecast || {};
+  const costVariance = costKpi.variance;
+  const costVarianceLabel = costVariance === null || costVariance === undefined
+    ? "Variance pending forecast baseline"
+    : `${costVariance >= 0 ? "+" : ""}${formatCurrency(costVariance)} vs forecast`;
   const activeSectionLabel = {
     monitor: "Forecast Monitor",
     diagnostics: "Diagnostics",
@@ -965,6 +1036,7 @@ export default function DomainForecastPage({ domain }) {
         {actualState.error && <DismissibleMessage onClose={() => setActualState((current) => ({ ...current, error: "" }))}>{actualState.error}</DismissibleMessage>}
         {breakdownState.error && <DismissibleMessage onClose={() => setBreakdownState((current) => ({ ...current, error: "" }))}>{breakdownState.error}</DismissibleMessage>}
         {diagnosticsState.error && <DismissibleMessage onClose={() => setDiagnosticsState((current) => ({ ...current, error: "" }))}>{diagnosticsState.error}</DismissibleMessage>}
+        {kpiState.error && <DismissibleMessage onClose={() => setKpiState((current) => ({ ...current, error: "" }))}>{kpiState.error}</DismissibleMessage>}
         {dashboardCardState.error && <DismissibleMessage onClose={() => setDashboardCardState((current) => ({ ...current, error: "" }))}>{dashboardCardState.error}</DismissibleMessage>}
 
         <section className="controls-band forecast-ops-toolbar">
@@ -1085,6 +1157,39 @@ export default function DomainForecastPage({ domain }) {
               <article className="metric"><span>Open exceptions</span><strong>{validationRows.filter((row) => Number(row.mape || 0) > 12).length}</strong><p>Groups above 12% MAPE in the current view</p></article>
               <article className="metric"><span>Visible series</span><strong>{visibleSeries.length}</strong><p>{activeLevelLabel.toLowerCase()} rows matching filters</p></article>
             </section>
+
+            {showAftersalesKpis && (
+            <section className="forecast-kpi-band" aria-label={`${domain} aftersales KPI summary`}>
+              {isParts && cards.fillRate && (
+                <KpiMetric
+                  label="Fill Rate"
+                  value={kpiState.loading ? "Loading" : formatPercent(kpiState.kpis.fillRate?.value)}
+                  detail={`${formatUnits(kpiState.kpis.fillRate?.numerator)} fulfilled of ${formatUnits(kpiState.kpis.fillRate?.denominator)} demanded`}
+                />
+              )}
+              {!isParts && !isWarranty && cards.mttr && (
+                <KpiMetric
+                  label="MTTR"
+                  value={kpiState.loading ? "Loading" : `${formatDecimal(kpiState.kpis.mttr?.value)} days`}
+                  detail={`${formatUnits(kpiState.kpis.mttr?.sampleCount)} completed orders in the KPI window`}
+                />
+              )}
+              {isWarranty && cards.returnRate && (
+                <KpiMetric
+                  label="Return Rate"
+                  value={kpiState.loading ? "Loading" : formatPercent(kpiState.kpis.returnRate?.value)}
+                  detail={`${formatUnits(kpiState.kpis.returnRate?.numerator)} returns of ${formatUnits(kpiState.kpis.returnRate?.denominator)} claim and return records`}
+                />
+              )}
+              {cards.serviceCostActualVsForecast && (
+                <KpiMetric
+                  label="Service Cost Actuals vs Forecast"
+                  value={kpiState.loading ? "Loading" : formatCurrency(costKpi.actual)}
+                  detail={kpiState.loading ? "Loading cost baseline" : costVarianceLabel}
+                />
+              )}
+            </section>
+            )}
 
             {showForecastAnalytics && (
             <section className="analytics-grid" aria-label={`${domain} forecast analytics`}>

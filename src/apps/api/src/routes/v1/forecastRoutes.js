@@ -9,6 +9,7 @@ import {
   forecastEndpointConfigs,
   getActualsPayload,
   getBaselineForecastPayload,
+  getSalesKpiPayload,
   getVersionedForecastPayload
 } from "../../services/forecastQueryService.js";
 import { getForecastMetricsPayload } from "../../services/forecastMetricsService.js";
@@ -24,6 +25,7 @@ import {
   getDomainActualsPayload,
   getDomainDiagnosticsPayload,
   getDomainForecastPayload,
+  getDomainKpiPayload,
   getDomainReferencePayload
 } from "../../services/domainForecastQueryService.js";
 
@@ -59,6 +61,10 @@ router.get("/metrics/histogram", requirePermission(permissions.viewForecast), as
 
 router.get("/metrics/leaderboard", requirePermission(permissions.viewForecast), async (request, response) => {
   await respondWithServiceCall(response, () => getForecastAccuracyLeaderboardPayload(request.user, request.query));
+});
+
+router.get("/kpis", requirePermission(permissions.viewForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getSalesKpiPayload(request.user, request.query));
 });
 
 router.get("/dashboard-cards", requireDashboardCardReadPermission, async (request, response) => {
@@ -99,6 +105,10 @@ router.get("/parts/diagnostics", requirePermission(permissions.viewPartsForecast
   await respondWithServiceCall(response, () => getDomainDiagnosticsPayload("parts", request.query, request.user));
 });
 
+router.get("/parts/kpis", requirePermission(permissions.viewPartsForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getDomainKpiPayload("parts", request.query, request.user));
+});
+
 router.get("/service", requirePermission(permissions.viewServiceForecast), async (request, response) => {
   await respondWithServiceCall(response, () => getDomainForecastPayload("service", request.query, request.user));
 });
@@ -115,6 +125,10 @@ router.get("/service/diagnostics", requirePermission(permissions.viewServiceFore
   await respondWithServiceCall(response, () => getDomainDiagnosticsPayload("service", request.query, request.user));
 });
 
+router.get("/service/kpis", requirePermission(permissions.viewServiceForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getDomainKpiPayload("service", request.query, request.user));
+});
+
 router.get("/warranty", requirePermission(permissions.viewWarrantyForecast), async (request, response) => {
   await respondWithServiceCall(response, () => getDomainForecastPayload("warranty", request.query, request.user));
 });
@@ -129,6 +143,10 @@ router.get("/warranty/actuals", requirePermission(permissions.viewWarrantyForeca
 
 router.get("/warranty/diagnostics", requirePermission(permissions.viewWarrantyForecast), async (request, response) => {
   await respondWithServiceCall(response, () => getDomainDiagnosticsPayload("warranty", request.query, request.user));
+});
+
+router.get("/warranty/kpis", requirePermission(permissions.viewWarrantyForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getDomainKpiPayload("warranty", request.query, request.user));
 });
 
 router.get("/admin/status", requirePermission(permissions.manageForecast), async (_request, response) => {

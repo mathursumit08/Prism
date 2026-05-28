@@ -83,28 +83,28 @@ function resolvePageFromHash(hash) {
 const forecastNavDefinitions = [
   // Each dashboard side-menu item owns a group of cards. When an admin hides every
   // card in a group, the menu item is hidden as well.
-  { hash: "#forecast", label: "Forecast Monitor", cards: ["trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
+  { hash: "#forecast", label: "Forecast Monitor", cards: ["salesForecastAccuracy", "salesActualsVsForecast", "salesForecastBias", "inventoryCoverage", "trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
   { hash: "#forecast-diagnostics", label: "Diagnostics", cards: ["accuracyTrend", "biasTrend", "actualPredicted", "errorDistribution"] },
   { hash: "#forecast-leaderboard", label: "Leaderboard", cards: ["leaderboard"] },
   { hash: "#forecast-tables", label: "Forecast Data", cards: ["segmentBreakdown", "forecastData"] }
 ];
 
 const partsNavDefinitions = [
-  { hash: "#parts-dashboard", label: "Forecast Monitor", cards: ["trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
+  { hash: "#parts-dashboard", label: "Forecast Monitor", cards: ["fillRate", "serviceCostActualVsForecast", "trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
   { hash: "#parts-dashboard-diagnostics", label: "Diagnostics", cards: ["accuracyTrend", "biasTrend", "actualPredicted", "errorDistribution"] },
   { hash: "#parts-dashboard-leaderboard", label: "Leaderboard", cards: ["leaderboard"] },
   { hash: "#parts-dashboard-data", label: "Forecast Data", cards: ["segmentBreakdown", "forecastData"] }
 ];
 
 const serviceNavDefinitions = [
-  { hash: "#service-dashboard", label: "Forecast Monitor", cards: ["trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
+  { hash: "#service-dashboard", label: "Forecast Monitor", cards: ["mttr", "serviceCostActualVsForecast", "trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
   { hash: "#service-dashboard-diagnostics", label: "Diagnostics", cards: ["accuracyTrend", "biasTrend", "actualPredicted", "errorDistribution"] },
   { hash: "#service-dashboard-leaderboard", label: "Leaderboard", cards: ["leaderboard"] },
   { hash: "#service-dashboard-data", label: "Forecast Data", cards: ["segmentBreakdown", "forecastData"] }
 ];
 
 const warrantyNavDefinitions = [
-  { hash: "#warranty-dashboard", label: "Forecast Monitor", cards: ["trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
+  { hash: "#warranty-dashboard", label: "Forecast Monitor", cards: ["returnRate", "serviceCostActualVsForecast", "trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
   { hash: "#warranty-dashboard-diagnostics", label: "Diagnostics", cards: ["accuracyTrend", "biasTrend", "actualPredicted", "errorDistribution"] },
   { hash: "#warranty-dashboard-leaderboard", label: "Leaderboard", cards: ["leaderboard"] },
   { hash: "#warranty-dashboard-data", label: "Forecast Data", cards: ["segmentBreakdown", "forecastData"] }

@@ -514,6 +514,11 @@ function normalizeObservation(row) {
   };
 }
 
+function currentMonthStart() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
 function getDomainScope(user, domain) {
   return user ? getScope(user, domain) : { kind: "all", scopes: [] };
 }
@@ -625,6 +630,152 @@ function appendSourceScopeCondition(conditions, values, scope) {
 
   values.push(regions);
   conditions.push(`sc.region = ANY($${values.length}::VARCHAR[])`);
+}
+
+function appendSourceGroupCondition(conditions, values, level, groupId) {
+  if (!groupId) {
+    return;
+  }
+
+  values.push(groupId);
+  const parameter = `$${values.length}`;
+
+  if (level === "service_center") {
+    conditions.push(`sc.service_center_id = ${parameter}`);
+    return;
+  }
+
+  if (level === "state") {
+    conditions.push(`sc.state = ${parameter}`);
+    return;
+  }
+
+  conditions.push(`sc.region = ${parameter}`);
+}
+
+function addDomainSourceFilters(domain, conditions, values, query, sourceAlias) {
+  if (domain === "parts") {
+    if (query.partId) {
+      values.push(query.partId);
+      conditions.push(`${sourceAlias}.part_id = $${values.length}`);
+    }
+    if (query.partCategory) {
+      values.push(query.partCategory);
+      conditions.push(`sp.part_category = $${values.length}`);
+    }
+    if (query.modelId) {
+      values.push(query.modelId);
+      conditions.push(`${sourceAlias}.model_id = $${values.length}`);
+    }
+    if (query.variantId) {
+      values.push(query.variantId);
+      conditions.push(`${sourceAlias}.variant_id = $${values.length}`);
+    }
+    return;
+  }
+
+  if (domain === "warranty") {
+    if (query.claimType) {
+      values.push(query.claimType);
+      conditions.push(`${sourceAlias}.claim_type = $${values.length}`);
+    }
+    if (query.returnReason) {
+      values.push(query.returnReason);
+      conditions.push(`${sourceAlias}.return_reason = $${values.length}`);
+    }
+    if (query.ageBucket) {
+      values.push(query.ageBucket);
+      conditions.push(`${sourceAlias}.age_bucket = $${values.length}`);
+    }
+    if (query.modelId) {
+      values.push(query.modelId);
+      conditions.push(`${sourceAlias}.model_id = $${values.length}`);
+    }
+    if (query.variantId) {
+      values.push(query.variantId);
+      conditions.push(`${sourceAlias}.variant_id = $${values.length}`);
+    }
+    return;
+  }
+
+  if (query.serviceType) {
+    values.push(query.serviceType);
+    conditions.push(`${sourceAlias}.service_type = $${values.length}`);
+  }
+  if (query.jobCategory) {
+    values.push(query.jobCategory);
+    conditions.push(`${sourceAlias}.job_category = $${values.length}`);
+  }
+  if (query.modelId) {
+    values.push(query.modelId);
+    conditions.push(`${sourceAlias}.model_id = $${values.length}`);
+  }
+  if (query.variantId) {
+    values.push(query.variantId);
+    conditions.push(`${sourceAlias}.variant_id = $${values.length}`);
+  }
+}
+
+function buildKpiActualSourceCte(domain, query, values, sourceConditions) {
+  if (domain === "parts") {
+    sourceConditions.push("sp.is_active = TRUE");
+    addDomainSourceFilters(domain, sourceConditions, values, query, "msd");
+
+    return `
+      SELECT
+        msd.month,
+        SUM(msd.quantity_demanded)::NUMERIC AS demanded_units,
+        SUM(msd.quantity_fulfilled)::NUMERIC AS fulfilled_units,
+        0::NUMERIC AS completed_orders,
+        0::NUMERIC AS repair_days,
+        0::NUMERIC AS claim_count,
+        0::NUMERIC AS return_count,
+        SUM(msd.quantity_fulfilled * COALESCE(sp.unit_cost, 0))::NUMERIC AS actual_cost
+      FROM monthly_service_parts_demand msd
+      JOIN service_centers sc ON sc.service_center_id = msd.service_center_id
+      JOIN service_parts sp ON sp.part_id = msd.part_id
+      WHERE ${sourceConditions.join(" AND ")}
+      GROUP BY msd.month
+    `;
+  }
+
+  if (domain === "warranty") {
+    addDomainSourceFilters(domain, sourceConditions, values, query, "mwv");
+
+    return `
+      SELECT
+        mwv.month,
+        0::NUMERIC AS demanded_units,
+        0::NUMERIC AS fulfilled_units,
+        0::NUMERIC AS completed_orders,
+        0::NUMERIC AS repair_days,
+        SUM(mwv.claim_count)::NUMERIC AS claim_count,
+        SUM(mwv.return_count)::NUMERIC AS return_count,
+        SUM(mwv.claim_amount + mwv.return_amount)::NUMERIC AS actual_cost
+      FROM monthly_warranty_return_volume mwv
+      JOIN service_centers sc ON sc.service_center_id = mwv.service_center_id
+      WHERE ${sourceConditions.join(" AND ")}
+      GROUP BY mwv.month
+    `;
+  }
+
+  addDomainSourceFilters(domain, sourceConditions, values, query, "so");
+
+  return `
+    SELECT
+      so.month,
+      0::NUMERIC AS demanded_units,
+      0::NUMERIC AS fulfilled_units,
+      COUNT(*) FILTER (WHERE so.completed_date IS NOT NULL)::NUMERIC AS completed_orders,
+      SUM(GREATEST(so.completed_date - so.order_date, 0)) FILTER (WHERE so.completed_date IS NOT NULL)::NUMERIC AS repair_days,
+      0::NUMERIC AS claim_count,
+      0::NUMERIC AS return_count,
+      SUM((COALESCE(so.labor_hours, 0) * 850) + (COALESCE(so.bay_hours, 0) * 300))::NUMERIC AS actual_cost
+    FROM service_orders so
+    JOIN service_centers sc ON sc.service_center_id = so.service_center_id
+    WHERE ${sourceConditions.join(" AND ")}
+    GROUP BY so.month
+  `;
 }
 
 async function ensureDomainGroupAllowed(user, domain, level, groupId, db = pool) {
@@ -1067,6 +1218,169 @@ export async function getDomainDiagnosticsPayload(domain, query, user, db = pool
       biasPct: round(item.bias_pct),
       sampleCount: Number(item.sample_count || 0)
     }))
+  };
+}
+
+export async function getDomainKpiPayload(domain, query, user, db = pool) {
+  const config = getDomainConfig(domain);
+  const requestedGroupId = query.groupId || query.serviceCenterId || query.state || query.zone || null;
+  const { scope, level, groupId } = resolveDomainScopeSelection(user, domain, query.level, requestedGroupId);
+  const horizon = parseOptionalHorizon(query.horizon) || 6;
+  const startDate = parseOptionalDate(query.startDate, "startDate") || currentMonthStart();
+
+  if (!allowedLevels.has(level)) {
+    throw createHttpError(400, `Unsupported forecast level "${level}"`);
+  }
+
+  await ensureDomainGroupAllowed(user, domain, level, groupId, db);
+
+  const actualValues = [];
+  const actualConditions = ["sc.is_active = TRUE"];
+  appendSourceScopeCondition(actualConditions, actualValues, scope);
+  appendSourceGroupCondition(actualConditions, actualValues, level, groupId);
+  const actualSourceCte = buildKpiActualSourceCte(domain, query, actualValues, actualConditions);
+  actualValues.push(horizon);
+  const actualWindowParameter = `$${actualValues.length}`;
+
+  const actualResult = await db.query(
+    `
+      WITH source_rows AS (${actualSourceCte}),
+      latest_month AS (
+        SELECT MAX(month) AS max_month FROM source_rows
+      )
+      SELECT
+        SUM(demanded_units)::NUMERIC AS demanded_units,
+        SUM(fulfilled_units)::NUMERIC AS fulfilled_units,
+        SUM(completed_orders)::NUMERIC AS completed_orders,
+        SUM(repair_days)::NUMERIC AS repair_days,
+        SUM(claim_count)::NUMERIC AS claim_count,
+        SUM(return_count)::NUMERIC AS return_count,
+        SUM(actual_cost)::NUMERIC AS actual_cost,
+        TO_CHAR(MIN(month), 'YYYY-MM-01') AS actual_start_month,
+        TO_CHAR(MAX(month), 'YYYY-MM-01') AS actual_end_month
+      FROM source_rows
+      CROSS JOIN latest_month lm
+      WHERE lm.max_month IS NOT NULL
+        AND month >= lm.max_month - ((${actualWindowParameter}::INTEGER - 1) * INTERVAL '1 month')
+        AND month <= lm.max_month
+    `,
+    actualValues
+  );
+
+  const latestRun = await ForecastRun.findLatestCompleted({
+    forecastDomain: config.forecastDomain,
+    forecastType: config.forecastType
+  });
+
+  let forecastUnits = null;
+  if (latestRun) {
+    const forecastValues = [config.forecastType, latestRun.run_id, level, startDate, horizon];
+    const forecastConditions = [
+      "fd.forecast_type = $1",
+      "fd.run_id = $2",
+      "fd.level = $3",
+      "fd.forecast_month >= $4::DATE"
+    ];
+    appendForecastScopeCondition(forecastConditions, forecastValues, scope, level);
+
+    if (groupId) {
+      forecastValues.push(groupId);
+      forecastConditions.push(`fd.group_id = $${forecastValues.length}`);
+    }
+
+    for (const [queryKey, column] of Object.entries(config.dimensionColumns)) {
+      const value = query[queryKey];
+      if (value) {
+        forecastValues.push(value);
+        forecastConditions.push(`fd.${column} = $${forecastValues.length}`);
+      }
+    }
+
+    const horizonParameter = "$5";
+    const forecastResult = await db.query(
+      `
+        WITH monthly AS (
+          SELECT
+            fd.forecast_month,
+            SUM(fd.${config.unitColumn})::NUMERIC AS forecast_units
+          FROM ${config.tableName} fd
+          WHERE ${forecastConditions.join(" AND ")}
+          GROUP BY fd.forecast_month
+        ),
+        ranked AS (
+          SELECT
+            forecast_units,
+            ROW_NUMBER() OVER (
+              ORDER BY forecast_month
+            ) AS horizon_month
+          FROM monthly
+        )
+        SELECT SUM(forecast_units)::NUMERIC AS forecast_units
+        FROM ranked
+        WHERE horizon_month <= ${horizonParameter}::INTEGER
+      `,
+      forecastValues
+    );
+    forecastUnits = toNumber(forecastResult.rows[0]?.forecast_units);
+  }
+
+  const row = actualResult.rows[0] || {};
+  const demandedUnits = toNumber(row.demanded_units) || 0;
+  const fulfilledUnits = toNumber(row.fulfilled_units) || 0;
+  const completedOrders = toNumber(row.completed_orders) || 0;
+  const repairDays = toNumber(row.repair_days) || 0;
+  const claimCount = toNumber(row.claim_count) || 0;
+  const returnCount = toNumber(row.return_count) || 0;
+  const actualCost = toNumber(row.actual_cost) || 0;
+  const actualVolume =
+    domain === "parts"
+      ? fulfilledUnits
+      : domain === "warranty"
+        ? claimCount + returnCount
+        : completedOrders;
+  const averageCost = actualVolume > 0 ? actualCost / actualVolume : null;
+  const forecastCost = averageCost !== null && forecastUnits !== null ? forecastUnits * averageCost : null;
+
+  return {
+    ok: true,
+    domain,
+    filters: {
+      level,
+      groupId,
+      horizon,
+      startDate,
+      ...Object.fromEntries(Object.keys(config.dimensionColumns).map((key) => [key, query[key] || null]))
+    },
+    window: {
+      actualStartMonth: row.actual_start_month || null,
+      actualEndMonth: row.actual_end_month || null,
+      forecastStartMonth: startDate
+    },
+    kpis: {
+      fillRate: {
+        value: demandedUnits > 0 ? round((fulfilledUnits / demandedUnits) * 100, 1) : null,
+        numerator: round(fulfilledUnits, 0),
+        denominator: round(demandedUnits, 0)
+      },
+      mttr: {
+        value: completedOrders > 0 ? round(repairDays / completedOrders, 1) : null,
+        unit: "days",
+        sampleCount: round(completedOrders, 0)
+      },
+      returnRate: {
+        value: claimCount + returnCount > 0 ? round((returnCount / (claimCount + returnCount)) * 100, 1) : null,
+        numerator: round(returnCount, 0),
+        denominator: round(claimCount + returnCount, 0)
+      },
+      serviceCostActualVsForecast: {
+        actual: round(actualCost, 0),
+        forecast: round(forecastCost, 0),
+        variance: forecastCost === null ? null : round(actualCost - forecastCost, 0),
+        variancePct: forecastCost ? round(((actualCost - forecastCost) / forecastCost) * 100, 1) : null,
+        averageCost: round(averageCost, 0),
+        forecastUnits: round(forecastUnits, 0)
+      }
+    }
   };
 }
 

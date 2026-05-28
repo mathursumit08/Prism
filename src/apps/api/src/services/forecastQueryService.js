@@ -31,6 +31,23 @@ function parseOptionalHorizon(value) {
   return horizon;
 }
 
+function currentMonthStart() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function toNumber(value) {
+  return value === null || value === undefined ? null : Number(value);
+}
+
+function round(value, decimals = 2) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return null;
+  }
+
+  return Number(Number(value).toFixed(decimals));
+}
+
 export const forecastEndpointConfigs = {
   // Versioned endpoint aliases all resolve into the same forecast_data store,
   // with each alias constraining the level or output shape it exposes.
@@ -216,6 +233,156 @@ export async function getVersionedForecastPayload(user, endpointConfig, filters)
     ...(normalizedResult.modelWeights ? { modelWeights: normalizedResult.modelWeights } : {}),
     pagination: paged.pagination,
     data: paged.data
+  };
+}
+
+export async function getSalesKpiPayload(user, query, db = pool) {
+  const level = query.level;
+  const groupId = resolveGroupId(level, query);
+  const segment = query.segment;
+  const modelId = query.modelId || query.ModelId;
+  const variantId = query.variantId || query.VariantId;
+  const horizon = parseOptionalHorizon(query.horizon) || 6;
+  const startDate = parseOptionalDate(query.startDate, "startDate") || currentMonthStart();
+  const scope = getScope(user);
+
+  validateLevel(level);
+  await ensureUserScopeAccess(user, level || "zone", groupId);
+
+  const forecastRows = await ForecastData.findLatest({
+    forecastType: "baseline",
+    level,
+    groupId,
+    segment,
+    modelId,
+    variantId,
+    scope,
+    startDate,
+    horizon
+  });
+  const forecastUnits = forecastRows.reduce((sum, row) => sum + Number(row.forecast_units || 0), 0);
+  const mapeValues = forecastRows
+    .map((row) => Number(row.validation_mape))
+    .filter((value) => Number.isFinite(value));
+  const averageMape = mapeValues.length ? mapeValues.reduce((sum, value) => sum + value, 0) / mapeValues.length : null;
+  const forecastAccuracy = averageMape === null ? null : Math.max(0, 100 - averageMape);
+
+  const actualValues = [];
+  const actualConditions = [
+    "d.is_active = TRUE",
+    "vm.is_active = TRUE",
+    "vm.is_discontinued = FALSE",
+    "vv.is_active = TRUE",
+    "vv.is_discontinued = FALSE"
+  ];
+
+  if (groupId) {
+    actualValues.push(groupId);
+    const groupParameter = `$${actualValues.length}`;
+    if (level === "dealer") {
+      actualConditions.push(`d.dealer_id = ${groupParameter}`);
+    } else if (level === "state") {
+      actualConditions.push(`d.state = ${groupParameter}`);
+    } else {
+      actualConditions.push(`d.region = ${groupParameter}`);
+    }
+  }
+
+  if (segment) {
+    actualValues.push(segment);
+    actualConditions.push(`vm.segment = $${actualValues.length}`);
+  }
+
+  if (modelId) {
+    actualValues.push(modelId);
+    actualConditions.push(`m.model_id = $${actualValues.length}`);
+  }
+
+  if (variantId) {
+    actualValues.push(variantId);
+    actualConditions.push(`m.variant_id = $${actualValues.length}`);
+  }
+
+  appendSalesSourceScopeCondition(actualConditions, actualValues, scope, "d");
+  actualValues.push(horizon);
+  const horizonParameter = `$${actualValues.length}`;
+
+  const actualResult = await db.query(
+    `
+      WITH source_rows AS (
+        SELECT
+          m.month,
+          m.units_sold,
+          m.stock_available,
+          m.inventory_days
+        FROM monthly_sales_data m
+        JOIN dealers d ON d.dealer_id = m.dealer_id
+        JOIN vehicle_models vm ON vm.model_id = m.model_id
+        JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+          AND vv.model_id = m.model_id
+        WHERE ${actualConditions.join(" AND ")}
+      ),
+      latest_month AS (
+        SELECT MAX(month) AS max_month FROM source_rows
+      )
+      SELECT
+        SUM(units_sold)::NUMERIC AS actual_units,
+        SUM(stock_available)::NUMERIC AS stock_available,
+        AVG(inventory_days)::NUMERIC AS inventory_days,
+        TO_CHAR(MIN(month), 'YYYY-MM-01') AS actual_start_month,
+        TO_CHAR(MAX(month), 'YYYY-MM-01') AS actual_end_month
+      FROM source_rows
+      CROSS JOIN latest_month lm
+      WHERE lm.max_month IS NOT NULL
+        AND month >= lm.max_month - ((${horizonParameter}::INTEGER - 1) * INTERVAL '1 month')
+        AND month <= lm.max_month
+    `,
+    actualValues
+  );
+
+  const actualRow = actualResult.rows[0] || {};
+  const actualUnits = toNumber(actualRow.actual_units) || 0;
+  const actualsVsForecast = forecastUnits > 0 ? (actualUnits / forecastUnits) * 100 : null;
+  const forecastBias = actualUnits > 0 ? ((forecastUnits - actualUnits) / actualUnits) * 100 : null;
+
+  return {
+    ok: true,
+    filters: {
+      level: level || "zone",
+      groupId: groupId || null,
+      segment: segment || null,
+      modelId: modelId || null,
+      variantId: variantId || null,
+      horizon,
+      startDate
+    },
+    window: {
+      actualStartMonth: actualRow.actual_start_month || null,
+      actualEndMonth: actualRow.actual_end_month || null,
+      forecastStartMonth: startDate
+    },
+    kpis: {
+      salesForecastAccuracy: {
+        value: round(forecastAccuracy, 1),
+        mape: round(averageMape, 1),
+        sampleCount: mapeValues.length
+      },
+      salesActualsVsForecast: {
+        value: round(actualsVsForecast, 1),
+        actual: round(actualUnits, 0),
+        forecast: round(forecastUnits, 0)
+      },
+      salesForecastBias: {
+        value: round(forecastBias, 1),
+        actual: round(actualUnits, 0),
+        forecast: round(forecastUnits, 0)
+      },
+      inventoryCoverage: {
+        value: round(actualRow.inventory_days, 1),
+        unit: "days",
+        stockAvailable: round(actualRow.stock_available, 0)
+      }
+    }
   };
 }
 

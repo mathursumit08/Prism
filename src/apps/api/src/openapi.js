@@ -352,7 +352,7 @@ const dashboardCardSchema = {
   properties: {
     key: { type: "string" },
     label: { type: "string" },
-    category: { enum: ["Graphs", "Tables"], type: "string" },
+    category: { enum: ["KPIs", "Graphs", "Tables"], type: "string" },
     displayOrder: { type: "integer" },
     enabled: { type: "boolean" },
     updatedAt: { format: "date-time", type: "string" }
