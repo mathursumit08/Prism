@@ -514,6 +514,29 @@ function normalizeObservation(row) {
   };
 }
 
+function resolveDomainRollupType(domain, query) {
+  if (query.modelId || query.variantId) {
+    return null;
+  }
+
+  if (domain === "parts") {
+    if (query.partId || query.breakdown === "part") return "part";
+    if (query.partCategory || query.breakdown === "part_category") return "part_category";
+    return "total";
+  }
+
+  if (domain === "warranty") {
+    if (query.ageBucket || query.breakdown === "age_bucket") return "age_bucket";
+    if (query.returnReason || query.breakdown === "return_reason") return "return_reason";
+    if (query.claimType || query.breakdown === "claim_type") return "claim_type";
+    return "total";
+  }
+
+  if (query.jobCategory || query.breakdown === "job_category") return "job_category";
+  if (query.serviceType || query.breakdown === "service_type") return "service_type";
+  return "total";
+}
+
 function currentMonthStart() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
@@ -860,87 +883,111 @@ export async function getDomainForecastPayload(domain, query, user, db = pool) {
     throw createHttpError(404, `No completed ${domain} forecast run found`);
   }
 
-  const values = [config.forecastType, latestRun.run_id, level];
-  const conditions = [
-    "fd.forecast_type = $1",
-    "fd.run_id = $2",
-    "fd.level = $3"
-  ];
-  appendForecastScopeCondition(conditions, values, scope, level);
+  async function loadRows({ useRollups }) {
+    const rollupType = useRollups ? resolveDomainRollupType(domain, query) : null;
+    const sourceConfig = rollupType
+      ? { ...config, tableName: "domain_forecast_rollups", unitColumn: "forecast_units" }
+      : config;
+    const values = [config.forecastType, latestRun.run_id, level];
+    const conditions = [
+      "fd.forecast_type = $1",
+      "fd.run_id = $2",
+      "fd.level = $3"
+    ];
 
-  if (groupId) {
-    values.push(groupId);
-    conditions.push(`fd.group_id = $${values.length}`);
-  }
-
-  for (const [queryKey, column] of Object.entries(config.dimensionColumns)) {
-    const value = query[queryKey];
-    if (value) {
-      values.push(value);
-      conditions.push(`fd.${column} = $${values.length}`);
+    if (rollupType) {
+      values.push(config.forecastDomain);
+      conditions.push(`fd.forecast_domain = $${values.length}`);
+      values.push(rollupType);
+      conditions.push(`fd.rollup_type = $${values.length}`);
     }
+
+    appendForecastScopeCondition(conditions, values, scope, level);
+
+    if (groupId) {
+      values.push(groupId);
+      conditions.push(`fd.group_id = $${values.length}`);
+    }
+
+    for (const [queryKey, column] of Object.entries(config.dimensionColumns)) {
+      const value = query[queryKey];
+      if (value) {
+        values.push(value);
+        conditions.push(`fd.${column} = $${values.length}`);
+      }
+    }
+
+    if (startDate) {
+      values.push(startDate);
+      conditions.push(`fd.forecast_month >= $${values.length}::DATE`);
+    }
+
+    if (endDate) {
+      values.push(endDate);
+      conditions.push(`fd.forecast_month <= $${values.length}::DATE`);
+    }
+
+    values.push(Number.isInteger(Number(horizon)) ? Number(horizon) : null);
+    const horizonParameter = `$${values.length}`;
+    const dimensions = buildDimensionSql(domain, query);
+    const groupByColumns = [
+      "fd.level",
+      "fd.group_id",
+      "fd.group_label",
+      "fd.forecast_month",
+      ...dimensions.groupBy
+    ];
+
+    const result = await db.query(
+      `
+        WITH aggregated AS (
+          SELECT
+            fd.level,
+            fd.group_id,
+            fd.group_label,
+            ${dimensions.select},
+            TO_CHAR(fd.forecast_month, 'YYYY-MM-01') AS forecast_month,
+            SUM(fd.${sourceConfig.unitColumn})::NUMERIC AS forecast_units,
+            ROUND(GREATEST(0, SUM(fd.${sourceConfig.unitColumn}) - SQRT(SUM(POWER(GREATEST(fd.${sourceConfig.unitColumn} - fd.lower_80, 0), 2)))))::NUMERIC AS lower_80,
+            ROUND(SUM(fd.${sourceConfig.unitColumn}) + SQRT(SUM(POWER(GREATEST(fd.upper_80 - fd.${sourceConfig.unitColumn}, 0), 2))))::NUMERIC AS upper_80,
+            ROUND(GREATEST(0, SUM(fd.${sourceConfig.unitColumn}) - SQRT(SUM(POWER(GREATEST(fd.${sourceConfig.unitColumn} - fd.lower_95, 0), 2)))))::NUMERIC AS lower_95,
+            ROUND(SUM(fd.${sourceConfig.unitColumn}) + SQRT(SUM(POWER(GREATEST(fd.upper_95 - fd.${sourceConfig.unitColumn}, 0), 2))))::NUMERIC AS upper_95,
+            CASE WHEN COUNT(DISTINCT fd.model_method) = 1 THEN MIN(fd.model_method) ELSE 'aggregated-domain-forecast' END AS model_method,
+            AVG(fd.validation_mae) AS validation_mae,
+            AVG(fd.validation_rmse) AS validation_rmse,
+            AVG(fd.validation_mape) AS validation_mape,
+            CASE WHEN COUNT(DISTINCT fd.data_quality) = 1 THEN MIN(fd.data_quality) ELSE 'sparse' END AS data_quality
+          FROM ${sourceConfig.tableName} fd
+          WHERE ${conditions.join(" AND ")}
+          GROUP BY ${groupByColumns.join(", ")}
+        ),
+        ranked AS (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              PARTITION BY level, group_id, part_id, part_category, service_type, job_category, claim_type, return_reason, age_bucket, model_id, variant_id
+              ORDER BY fd.forecast_month
+            ) AS horizon_month
+          FROM aggregated fd
+        )
+        SELECT *
+        FROM ranked
+        WHERE (${horizonParameter}::INTEGER IS NULL OR horizon_month <= ${horizonParameter}::INTEGER)
+        ORDER BY level, group_label, group_id, forecast_month
+      `,
+      values
+    );
+
+    return {
+      rows: result.rows,
+      rollupType
+    };
   }
 
-  if (startDate) {
-    values.push(startDate);
-    conditions.push(`fd.forecast_month >= $${values.length}::DATE`);
+  let result = await loadRows({ useRollups: true });
+  if (result.rollupType && result.rows.length === 0) {
+    result = await loadRows({ useRollups: false });
   }
-
-  if (endDate) {
-    values.push(endDate);
-    conditions.push(`fd.forecast_month <= $${values.length}::DATE`);
-  }
-
-  values.push(Number.isInteger(Number(horizon)) ? Number(horizon) : null);
-  const horizonParameter = `$${values.length}`;
-  const dimensions = buildDimensionSql(domain, query);
-  const groupByColumns = [
-    "fd.level",
-    "fd.group_id",
-    "fd.group_label",
-    "fd.forecast_month",
-    ...dimensions.groupBy
-  ];
-
-  const result = await db.query(
-    `
-      WITH aggregated AS (
-        SELECT
-          fd.level,
-          fd.group_id,
-          fd.group_label,
-          ${dimensions.select},
-          TO_CHAR(fd.forecast_month, 'YYYY-MM-01') AS forecast_month,
-          SUM(fd.${config.unitColumn})::NUMERIC AS forecast_units,
-          ROUND(GREATEST(0, SUM(fd.${config.unitColumn}) - SQRT(SUM(POWER(GREATEST(fd.${config.unitColumn} - fd.lower_80, 0), 2)))))::NUMERIC AS lower_80,
-          ROUND(SUM(fd.${config.unitColumn}) + SQRT(SUM(POWER(GREATEST(fd.upper_80 - fd.${config.unitColumn}, 0), 2))))::NUMERIC AS upper_80,
-          ROUND(GREATEST(0, SUM(fd.${config.unitColumn}) - SQRT(SUM(POWER(GREATEST(fd.${config.unitColumn} - fd.lower_95, 0), 2)))))::NUMERIC AS lower_95,
-          ROUND(SUM(fd.${config.unitColumn}) + SQRT(SUM(POWER(GREATEST(fd.upper_95 - fd.${config.unitColumn}, 0), 2))))::NUMERIC AS upper_95,
-          CASE WHEN COUNT(DISTINCT fd.model_method) = 1 THEN MIN(fd.model_method) ELSE 'aggregated-domain-forecast' END AS model_method,
-          AVG(fd.validation_mae) AS validation_mae,
-          AVG(fd.validation_rmse) AS validation_rmse,
-          AVG(fd.validation_mape) AS validation_mape,
-          CASE WHEN COUNT(DISTINCT fd.data_quality) = 1 THEN MIN(fd.data_quality) ELSE 'sparse' END AS data_quality
-        FROM ${config.tableName} fd
-        WHERE ${conditions.join(" AND ")}
-        GROUP BY ${groupByColumns.join(", ")}
-      ),
-      ranked AS (
-        SELECT
-          *,
-          ROW_NUMBER() OVER (
-            PARTITION BY level, group_id, part_id, part_category, service_type, job_category, claim_type, return_reason, age_bucket, model_id, variant_id
-            ORDER BY fd.forecast_month
-          ) AS horizon_month
-        FROM aggregated fd
-      )
-      SELECT *
-      FROM ranked
-      WHERE (${horizonParameter}::INTEGER IS NULL OR horizon_month <= ${horizonParameter}::INTEGER)
-      ORDER BY level, group_label, group_id, forecast_month
-    `,
-    values
-  );
 
   return {
     ok: true,
