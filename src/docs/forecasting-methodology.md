@@ -16,6 +16,18 @@ and zonewise totals match exactly for the same scope and forecast month.
 Active festive-event uplifts are loaded from `forecast_event_calendar` and
 applied during the nightly refresh.
 
+The platform also produces separate aftersales forecasts:
+
+- Parts demand forecasting for slow-moving and intermittent spare-parts demand.
+- Service order volume forecasting for workshop capacity planning.
+- Warranty and returns forecasting for expected claim and return volume.
+- SLA breach risk forecasting for expected service categories at risk of SLA
+  misses.
+
+Those aftersales domains are stored independently from the sales forecast but
+share the same run tracking table, permission model, event calendar, and
+dashboard conventions.
+
 ## Data Preparation
 
 For each forecast request, the system first aggregates historical sales only at
@@ -119,6 +131,126 @@ After dealer forecasts are created, the system rolls them up:
 Because those higher levels are aggregated from dealer results, total forecasted
 units remain consistent across dealerwise, statewise, and zonewise views.
 
+## Aftersales Forecast Domains
+
+Aftersales forecasts use service-center hierarchy instead of dealer hierarchy:
+
+- Service center: one series per service center.
+- State: service-center forecasts summed by state.
+- Zone: service-center forecasts summed by region or zone.
+
+The worker creates one latest completed run per forecast domain in
+`forecast_runs.forecast_domain`. The domain values are title-case:
+
+- `Parts`
+- `Service`
+- `Warranty`
+- `SLA`
+
+Access is controlled through `user_access_scopes`. National scope can see all
+service centers for the domain, Region scope can see only service centers in
+that region, and Service Center scope can see only the assigned center. Service
+Managers receive `View SLA Forecast` through the SLA migration and their
+existing Service scopes are copied into the SLA domain.
+
+### Parts Demand
+
+Parts forecasting reads `monthly_service_parts_demand` and writes
+`parts_forecast_data`.
+
+The natural grain is:
+
+- service center
+- part id
+- part category
+- model id
+- variant id
+- month
+
+Parts demand is often intermittent, so the preferred method is Croston's method
+when a series has sparse non-zero demand. If the series is not intermittent, the
+worker falls back to the shared moving-average and seasonal-index machinery.
+The stored forecast unit is expected part demand.
+
+### Service Order Volume
+
+Service forecasting reads `monthly_service_order_volume` and writes
+`service_forecast_data`.
+
+The natural grain is:
+
+- service center
+- service type
+- job category
+- model id
+- variant id
+- month
+
+The preferred method is a moving average with trend adjustment and monthly
+seasonal factors when enough history is available. The stored forecast unit is
+expected service orders.
+
+### Warranty and Returns
+
+Warranty forecasting reads `monthly_warranty_return_volume` and writes
+`warranty_forecast_data`.
+
+The natural grain is:
+
+- service center
+- claim type
+- return reason
+- age bucket
+- model id
+- variant id
+- month
+
+The point forecast is expected claims plus returns. The worker uses the same
+moving-average, trend, seasonality, and empirical interval calibration flow as
+Service.
+
+### SLA Breach Risk
+
+SLA forecasting reads `monthly_sla_performance` and writes
+`sla_forecast_data`.
+
+The source table is service-adjacent and is seeded from service order volume
+history until richer SLA source data is available. The natural grain is:
+
+- service center
+- service type
+- job category
+- model id
+- variant id
+- month
+
+The point forecast is expected SLA breaches. Each stored forecast point also
+keeps risk-specific values:
+
+- `expected_breaches`
+- `breach_probability`
+- `risk_score`
+- `risk_level`
+
+The first SLA scoring model is intentionally explainable. Expected breaches are
+the primary driver, and wider 95% forecast intervals or weaker validation MAPE
+raise the score. Risk levels are mapped from the score as Low, Medium, High, or
+Critical.
+
+## Aftersales Rollups
+
+Parts, Service, and Warranty dashboard forecast queries can read from
+`domain_forecast_rollups` instead of scanning detailed forecast rows. The worker
+refreshes those rollups after saving a completed domain run. The rollup grains
+are:
+
+- Parts: total, part category, part.
+- Service: total, service type, job category.
+- Warranty: total, claim type, return reason, age bucket.
+
+SLA currently reads directly from `sla_forecast_data` because the forecast rows
+contain risk-specific fields that do not fit the shared unit-rollup table yet.
+
 ## Prediction Intervals
 
 Each forecast point includes empirical prediction interval bands:
@@ -220,6 +352,18 @@ The worker flow is:
 9. Mark the `forecast_runs` row as `completed`.
 10. If an error occurs, mark the run as `failed` with the error message.
 
+For aftersales domains the flow is similar:
+
+1. Acquire the domain-specific advisory lock.
+2. Create a `forecast_runs` row with the domain and forecast type.
+3. Load active forecast events for the same domain and type.
+4. Build service-center forecasts from the domain source table.
+5. Apply event uplifts and rebuild state and zone totals.
+6. Clear future rows that no longer map to source actual months.
+7. Insert the new forecast rows in batches.
+8. Refresh domain rollups for Parts, Service, and Warranty.
+9. Store run-level calibration metrics and mark the run `completed`.
+
 For immediate generation, use:
 
 ```bash
@@ -234,7 +378,7 @@ before generation.
 The stored forecast API is:
 
 ```bash
-GET /api/forecasts/baseline
+GET /api/v1/forecasts/baseline
 ```
 
 Each forecast point in the response includes `unitsSold`, `lower_80`,
@@ -249,10 +393,46 @@ Supported query parameters:
 Examples:
 
 ```bash
-curl "http://localhost:4000/api/forecasts/baseline?level=dealer"
-curl "http://localhost:4000/api/forecasts/baseline?level=state&modelId=MDL001"
-curl "http://localhost:4000/api/forecasts/baseline?level=zone&VariantId=VAR001"
+curl "http://localhost:4000/api/v1/forecasts/baseline?level=dealer"
+curl "http://localhost:4000/api/v1/forecasts/baseline?level=state&modelId=MDL001"
+curl "http://localhost:4000/api/v1/forecasts/baseline?level=zone&variantId=VAR001"
 ```
 
 The API only reads the latest completed forecast run. Failed or in-progress runs
 are ignored.
+
+Aftersales dashboard APIs use the domain in the path:
+
+```bash
+GET /api/v1/forecasts/parts
+GET /api/v1/forecasts/service
+GET /api/v1/forecasts/warranty
+GET /api/v1/forecasts/sla
+```
+
+Each domain also supports:
+
+- `/references`
+- `/actuals`
+- `/diagnostics`
+- `/kpis`
+
+Common query parameters are:
+
+- `level`: `service_center`, `state`, or `zone`.
+- `groupId`: optional service center, state, or zone id.
+- `horizon`: forecast months to return.
+- `startDate` and `endDate`: optional forecast date bounds.
+- `serviceType` and `jobCategory`: Service and SLA filters.
+- `partId` and `partCategory`: Parts filters.
+- `claimType`, `returnReason`, and `ageBucket`: Warranty filters.
+- `modelId` and `variantId`: optional vehicle filters.
+
+Examples:
+
+```bash
+curl "http://localhost:4000/api/v1/forecasts/service?level=zone&horizon=6"
+curl "http://localhost:4000/api/v1/forecasts/parts?level=service_center&groupId=SVC001&partCategory=Filters"
+curl "http://localhost:4000/api/v1/forecasts/warranty/diagnostics?level=state&window=12"
+curl "http://localhost:4000/api/v1/forecasts/sla?level=zone&serviceType=Repair"
+```

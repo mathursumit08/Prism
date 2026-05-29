@@ -1,11 +1,12 @@
 import { DomainForecastData, ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
 import { ForecastCacheService } from "./forecastCacheService.js";
-import { runForecastWorker, runPartsForecastWorker, runServiceForecastWorker, runWarrantyForecastWorker } from "../workers/forecastWorker.js";
+import { runForecastWorker, runPartsForecastWorker, runServiceForecastWorker, runSlaForecastWorker, runWarrantyForecastWorker } from "../workers/forecastWorker.js";
 
 const FORECAST_TYPE = "baseline";
 const PARTS_FORECAST_TYPE = "demand";
 const SERVICE_FORECAST_TYPE = "order_volume";
 const WARRANTY_FORECAST_TYPE = "warranty_returns";
+const SLA_FORECAST_TYPE = "sla_breach_risk";
 const DEFAULT_HORIZON_MONTHS = 6;
 const allowedHorizons = new Set([6, 12, 24]);
 const domainConfigs = {
@@ -44,6 +45,15 @@ const domainConfigs = {
     run: runWarrantyForecastWorker,
     countRows: () => DomainForecastData.count("warranty", WARRANTY_FORECAST_TYPE),
     clearRows: () => DomainForecastData.clearFuture("warranty", WARRANTY_FORECAST_TYPE)
+  },
+  sla: {
+    key: "sla",
+    domain: "SLA",
+    forecastType: SLA_FORECAST_TYPE,
+    label: "SLA",
+    run: runSlaForecastWorker,
+    countRows: () => DomainForecastData.count("sla", SLA_FORECAST_TYPE),
+    clearRows: () => DomainForecastData.clearFuture("sla", SLA_FORECAST_TYPE)
   }
 };
 

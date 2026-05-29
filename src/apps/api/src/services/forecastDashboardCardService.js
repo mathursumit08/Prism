@@ -1,6 +1,6 @@
 import { pool } from "../db.js";
 
-export const dashboardCardDomains = ["Sales", "Parts", "Service", "Warranty"];
+export const dashboardCardDomains = ["Sales", "Parts", "Service", "Warranty", "SLA"];
 
 const baseCards = [
   { key: "salesForecastAccuracy", label: "Forecast Accuracy %", category: "KPIs", displayOrder: 1, domains: ["Sales"] },
@@ -8,9 +8,9 @@ const baseCards = [
   { key: "salesForecastBias", label: "Forecast Bias %", category: "KPIs", displayOrder: 3, domains: ["Sales"] },
   { key: "inventoryCoverage", label: "Inventory Coverage", category: "KPIs", displayOrder: 4, domains: ["Sales"] },
   { key: "fillRate", label: "Fill Rate - Parts availability vs demand", category: "KPIs", displayOrder: 1, domains: ["Parts"] },
-  { key: "mttr", label: "MTTR - Mean time to repair", category: "KPIs", displayOrder: 1, domains: ["Service"] },
+  { key: "mttr", label: "MTTR - Mean time to repair", category: "KPIs", displayOrder: 1, domains: ["Service", "SLA"] },
   { key: "returnRate", label: "Return Rate %", category: "KPIs", displayOrder: 1, domains: ["Warranty"] },
-  { key: "serviceCostActualVsForecast", label: "Service Cost - Actuals vs Forecast", category: "KPIs", displayOrder: 2, domains: ["Parts", "Service", "Warranty"] },
+  { key: "serviceCostActualVsForecast", label: "Service Cost - Actuals vs Forecast", category: "KPIs", displayOrder: 2, domains: ["Parts", "Service", "Warranty", "SLA"] },
   { key: "trend", label: "Trend - Actual vs Forecast trend", category: "Graphs", displayOrder: 1 },
   { key: "segmentSplit", label: "Segment split - Forecast by segment", category: "Graphs", displayOrder: 2 },
   { key: "accuracyTrend", label: "Accuracy - MAPE / MAE / RMSE trend", category: "Graphs", displayOrder: 3 },
@@ -38,6 +38,11 @@ const domainLabelOverrides = {
     segmentSplit: "Segment split - Forecast by claim and return segment",
     forecastGraph: "Forecast graph - Monthly claims and returns",
     regionalSegmentSplit: "Regional segment split - Warranty and returns within"
+  },
+  SLA: {
+    segmentSplit: "Segment split - Forecast by service segment",
+    forecastGraph: "Forecast graph - Monthly expected SLA breaches",
+    regionalSegmentSplit: "Regional segment split - SLA risk within"
   }
 };
 

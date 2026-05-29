@@ -19,6 +19,10 @@ const domainConfigs = {
   Warranty: {
     forecastType: "warranty_returns",
     permission: permissions.manageWarrantyForecast
+  },
+  SLA: {
+    forecastType: "sla_breach_risk",
+    permission: permissions.manageSlaForecast
   }
 };
 
@@ -96,6 +100,7 @@ function normalizeDomain(value = "Sales") {
   if (text === "parts") return "Parts";
   if (text === "service") return "Service";
   if (text === "warranty") return "Warranty";
+  if (text === "sla") return "SLA";
   return "Sales";
 }
 

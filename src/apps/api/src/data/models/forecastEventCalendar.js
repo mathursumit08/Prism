@@ -1,7 +1,7 @@
 import { pool } from "../../db.js";
 
 export const eventTypes = ["Festive", "Regulatory", "Promotional", "Holiday", "Other"];
-export const eventDomains = ["Sales", "Parts", "Service", "Warranty"];
+export const eventDomains = ["Sales", "Parts", "Service", "Warranty", "SLA"];
 export const eventScopes = ["National", "Zone", "State", "Service Center"];
 
 function buildValidationError(message) {

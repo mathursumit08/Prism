@@ -57,6 +57,18 @@ function resolvePageFromHash(hash) {
     return "warranty-dashboard";
   }
 
+  if (hash === "#sla-dashboard") {
+    return "sla-dashboard";
+  }
+
+  if (
+    hash === "#sla-dashboard-diagnostics" ||
+    hash === "#sla-dashboard-leaderboard" ||
+    hash === "#sla-dashboard-data"
+  ) {
+    return "sla-dashboard";
+  }
+
   if (hash === "#parts-forecast-admin") {
     return "parts-forecast-admin";
   }
@@ -67,6 +79,10 @@ function resolvePageFromHash(hash) {
 
   if (hash === "#warranty-forecast-admin") {
     return "warranty-forecast-admin";
+  }
+
+  if (hash === "#sla-forecast-admin") {
+    return "sla-forecast-admin";
   }
 
   if (hash === "#forecast-events") {
@@ -110,12 +126,20 @@ const warrantyNavDefinitions = [
   { hash: "#warranty-dashboard-data", label: "Forecast Data", cards: ["segmentBreakdown", "forecastData"] }
 ];
 
+const slaNavDefinitions = [
+  { hash: "#sla-dashboard", label: "Forecast Monitor", cards: ["mttr", "serviceCostActualVsForecast", "trend", "segmentSplit", "forecastGraph", "regionalSegmentSplit"] },
+  { hash: "#sla-dashboard-diagnostics", label: "Diagnostics", cards: ["accuracyTrend", "biasTrend", "actualPredicted", "errorDistribution"] },
+  { hash: "#sla-dashboard-leaderboard", label: "Leaderboard", cards: ["leaderboard"] },
+  { hash: "#sla-dashboard-data", label: "Forecast Data", cards: ["segmentBreakdown", "forecastData"] }
+];
+
 function createDefaultDashboardCardVisibilityByDomain() {
   return {
     Sales: { ...defaultDashboardCardVisibility },
     Parts: { ...defaultDashboardCardVisibility },
     Service: { ...defaultDashboardCardVisibility },
-    Warranty: { ...defaultDashboardCardVisibility }
+    Warranty: { ...defaultDashboardCardVisibility },
+    SLA: { ...defaultDashboardCardVisibility }
   };
 }
 
@@ -206,11 +230,13 @@ export default function App() {
   const canViewPartsForecast = user?.permissions?.includes("View Parts Forecast");
   const canViewServiceForecast = user?.permissions?.includes("View Service Forecast");
   const canViewWarrantyForecast = user?.permissions?.includes("View Warranty Forecast");
+  const canViewSlaForecast = user?.permissions?.includes("View SLA Forecast");
   const canManageForecast = user?.permissions?.includes("Manage Forecast");
   const canManagePartsForecast = user?.permissions?.includes("Manage Parts Forecast");
   const canManageServiceForecast = user?.permissions?.includes("Manage Service Forecast");
   const canManageWarrantyForecast = user?.permissions?.includes("Manage Warranty Forecast");
-  const canManageAnyForecast = Boolean(canManageForecast || canManagePartsForecast || canManageServiceForecast || canManageWarrantyForecast);
+  const canManageSlaForecast = user?.permissions?.includes("Manage SLA Forecast");
+  const canManageAnyForecast = Boolean(canManageForecast || canManagePartsForecast || canManageServiceForecast || canManageWarrantyForecast || canManageSlaForecast);
   const hasAnyPermission = Boolean(user?.permissions?.length);
   const isAdmin = user?.role === "Admin";
   const isServiceManager = user?.role === "Service Manager";
@@ -219,10 +245,12 @@ export default function App() {
   const hasPartsScope = hasDomainScope(user, "Parts");
   const hasServiceScope = hasDomainScope(user, "Service");
   const hasWarrantyScope = hasDomainScope(user, "Warranty");
+  const hasSlaScope = hasDomainScope(user, "SLA");
   const canAccessSalesDashboard = Boolean(canViewForecast && hasSalesScope);
   const canAccessPartsDashboard = Boolean(canViewPartsForecast && hasPartsScope);
   const canAccessServiceDashboard = Boolean(canViewServiceForecast && hasServiceScope);
   const canAccessWarrantyDashboard = Boolean(canViewWarrantyForecast && hasWarrantyScope);
+  const canAccessSlaDashboard = Boolean(canViewSlaForecast && hasSlaScope);
   const usesForecastHome = Boolean(user && canAccessSalesDashboard);
   const visibleForecastNavItems = useMemo(
     () =>
@@ -243,6 +271,10 @@ export default function App() {
     () => (canAccessWarrantyDashboard ? filterVisibleNavItems(warrantyNavDefinitions, dashboardCardVisibilityByDomain.Warranty) : []),
     [canAccessWarrantyDashboard, dashboardCardVisibilityByDomain]
   );
+  const visibleSlaNavItems = useMemo(
+    () => (canAccessSlaDashboard ? filterVisibleNavItems(slaNavDefinitions, dashboardCardVisibilityByDomain.SLA) : []),
+    [canAccessSlaDashboard, dashboardCardVisibilityByDomain]
+  );
   const canUseForecastDashboard = usesForecastHome && visibleForecastNavItems.length > 0;
   const fallbackPage = isPartsManager && canAccessPartsDashboard
     ? "parts-dashboard"
@@ -252,11 +284,13 @@ export default function App() {
         ? "home"
         : canAccessServiceDashboard
           ? "service-dashboard"
-          : canAccessPartsDashboard
-            ? "parts-dashboard"
-            : canAccessWarrantyDashboard
-              ? "warranty-dashboard"
-              : "home";
+          : canAccessSlaDashboard
+            ? "sla-dashboard"
+            : canAccessPartsDashboard
+              ? "parts-dashboard"
+              : canAccessWarrantyDashboard
+                ? "warranty-dashboard"
+                : "home";
 
   useEffect(() => {
     function handleHashChange() {
@@ -270,7 +304,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated || (!canAccessSalesDashboard && !canAccessPartsDashboard && !canAccessServiceDashboard && !canAccessWarrantyDashboard)) {
+    if (!isAuthenticated || (!canAccessSalesDashboard && !canAccessPartsDashboard && !canAccessServiceDashboard && !canAccessWarrantyDashboard && !canAccessSlaDashboard)) {
       setDashboardCardVisibilityByDomain(createDefaultDashboardCardVisibilityByDomain());
       return undefined;
     }
@@ -305,7 +339,7 @@ export default function App() {
       controller.abort();
       window.removeEventListener("dashboard-card-settings-changed", loadDashboardCardVisibility);
     };
-  }, [apiFetch, canAccessSalesDashboard, canAccessPartsDashboard, canAccessServiceDashboard, canAccessWarrantyDashboard, isAuthenticated]);
+  }, [apiFetch, canAccessSalesDashboard, canAccessPartsDashboard, canAccessServiceDashboard, canAccessWarrantyDashboard, canAccessSlaDashboard, isAuthenticated]);
 
   function navigate(nextPage) {
     const hashByPage = {
@@ -313,9 +347,11 @@ export default function App() {
       "parts-dashboard": "parts-dashboard",
       "service-dashboard": "service-dashboard",
       "warranty-dashboard": "warranty-dashboard",
+      "sla-dashboard": "sla-dashboard",
       "parts-forecast-admin": "parts-forecast-admin",
       "service-forecast-admin": "service-forecast-admin",
       "warranty-forecast-admin": "warranty-forecast-admin",
+      "sla-forecast-admin": "sla-forecast-admin",
       "forecast-events": "forecast-events",
       "dashboard-cards": "dashboard-cards",
       home: "home"
@@ -365,6 +401,11 @@ export default function App() {
       return;
     }
 
+    if (page === "sla-dashboard" && !canAccessSlaDashboard) {
+      navigate(fallbackPage);
+      return;
+    }
+
     if (page === "parts-forecast-admin" && !canManagePartsForecast) {
       navigate(fallbackPage);
       return;
@@ -376,6 +417,11 @@ export default function App() {
     }
 
     if (page === "warranty-forecast-admin" && !canManageWarrantyForecast) {
+      navigate(fallbackPage);
+      return;
+    }
+
+    if (page === "sla-forecast-admin" && !canManageSlaForecast) {
       navigate(fallbackPage);
       return;
     }
@@ -419,7 +465,15 @@ export default function App() {
         window.location.hash = visibleWarrantyNavItems[0]?.hash || "#home";
       }
     }
-  }, [canAccessPartsDashboard, canAccessServiceDashboard, canAccessWarrantyDashboard, canManageAnyForecast, canManageForecast, canManagePartsForecast, canManageServiceForecast, canManageWarrantyForecast, currentHash, fallbackPage, hasAnyPermission, isAdmin, isAuthenticated, page, user, usesForecastHome, visibleForecastNavItems, visiblePartsNavItems, visibleServiceNavItems, visibleWarrantyNavItems]);
+
+    if (page === "sla-dashboard") {
+      const currentSlaItem = slaNavDefinitions.find((item) => item.hash === currentHash);
+      const currentSlaItemVisible = visibleSlaNavItems.some((item) => item.hash === currentHash);
+      if (currentSlaItem && !currentSlaItemVisible) {
+        window.location.hash = visibleSlaNavItems[0]?.hash || "#home";
+      }
+    }
+  }, [canAccessPartsDashboard, canAccessServiceDashboard, canAccessWarrantyDashboard, canAccessSlaDashboard, canManageAnyForecast, canManageForecast, canManagePartsForecast, canManageServiceForecast, canManageWarrantyForecast, canManageSlaForecast, currentHash, fallbackPage, hasAnyPermission, isAdmin, isAuthenticated, page, user, usesForecastHome, visibleForecastNavItems, visiblePartsNavItems, visibleServiceNavItems, visibleWarrantyNavItems, visibleSlaNavItems]);
 
   if (booting) {
     return (
@@ -440,11 +494,13 @@ export default function App() {
   const partsNavItems = visiblePartsNavItems;
   const serviceNavItems = visibleServiceNavItems;
   const warrantyNavItems = visibleWarrantyNavItems;
+  const slaNavItems = visibleSlaNavItems;
   const manageNavItems = [
     ...(canManageForecast ? [{ hash: "#admin", label: "Sales Forecast" }] : []),
     ...(canManagePartsForecast ? [{ hash: "#parts-forecast-admin", label: "Parts Forecast" }] : []),
     ...(canManageServiceForecast ? [{ hash: "#service-forecast-admin", label: "Service Forecast" }] : []),
     ...(canManageWarrantyForecast ? [{ hash: "#warranty-forecast-admin", label: "Warranty Forecast" }] : []),
+    ...(canManageSlaForecast ? [{ hash: "#sla-forecast-admin", label: "SLA Forecast" }] : []),
     ...(canManageAnyForecast ? [{ hash: "#forecast-events", label: "Forecast Events" }] : []),
     ...(isAdmin ? [{ hash: "#dashboard-cards", label: "Dashboard Cards" }] : [])
   ];
@@ -539,6 +595,25 @@ export default function App() {
               </>
             )}
 
+            {slaNavItems.length > 0 && (
+              <>
+                <p>SLA Dashboard</p>
+                {slaNavItems.map((item) => (
+                  <a
+                    key={item.hash}
+                    className={currentHash === item.hash || (!currentHash && item.hash === "#sla-dashboard") ? "active" : ""}
+                    href={item.hash}
+                    onClick={() => {
+                      setCurrentHash(item.hash);
+                      setPage(resolvePageFromHash(item.hash));
+                    }}
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </>
+            )}
+
             {manageNavItems.length > 0 && (
               <>
                 <p>Manage</p>
@@ -585,6 +660,8 @@ export default function App() {
           <DomainForecast key="service-dashboard" domain="service" />
         ) : page === "warranty-dashboard" && canAccessWarrantyDashboard ? (
           <DomainForecast key="warranty-dashboard" domain="warranty" />
+        ) : page === "sla-dashboard" && canAccessSlaDashboard ? (
+          <DomainForecast key="sla-dashboard" domain="sla" />
         ) : page === "admin" && canManageForecast ? (
           <ManageForecast />
         ) : page === "parts-forecast-admin" && canManagePartsForecast ? (
@@ -613,6 +690,15 @@ export default function App() {
             description="Review warranty run health, clear future output, and launch warranty/returns forecast regeneration."
             regenerateLabel="Regenerate warranty forecast"
             clearLabel="Clear future warranty forecast rows"
+          />
+        ) : page === "sla-forecast-admin" && canManageSlaForecast ? (
+          <ManageForecast
+            domain="sla"
+            eyebrow="SLA Forecast Administration"
+            title="Manage SLA breach risk forecasting."
+            description="Review SLA run health, clear future output, and launch expected SLA breach risk forecast regeneration."
+            regenerateLabel="Regenerate SLA forecast"
+            clearLabel="Clear future SLA forecast rows"
           />
         ) : page === "forecast-events" && canManageAnyForecast ? (
           <ForecastEvents />

@@ -142,6 +142,7 @@ function buildBreakdownLabel(item, domain, breakdownMode) {
 function getDomainTitle(domain) {
   if (domain === "parts") return "Parts";
   if (domain === "warranty") return "Warranty";
+  if (domain === "sla") return "SLA";
   return "Service";
 }
 
@@ -656,8 +657,9 @@ export default function DomainForecastPage({ domain }) {
   const { apiFetch, user } = useAuth();
   const isParts = domain === "parts";
   const isWarranty = domain === "warranty";
+  const isSla = domain === "sla";
   const domainTitle = getDomainTitle(domain);
-  const unitLabel = isParts ? "Units" : isWarranty ? "Claims / Returns" : "Orders";
+  const unitLabel = isParts ? "Units" : isWarranty ? "Claims / Returns" : isSla ? "Expected breaches" : "Orders";
   const domainAccessScopes = useMemo(
     () => (user?.accessScopes || []).filter((scope) => scope.domain === domainTitle),
     [domainTitle, user?.accessScopes]
@@ -781,7 +783,7 @@ export default function DomainForecastPage({ domain }) {
     ? partId || partCategory || "All parts"
     : isWarranty
       ? claimType || returnReason || ageBucket || "All warranty and returns"
-      : serviceType || jobCategory || "All service orders";
+      : serviceType || jobCategory || (isSla ? "All SLA risk" : "All service orders");
   const activeLevelLabel = forecastLevels.find((item) => item.value === level)?.label || "Group";
   const breakdownMode = isParts ? "part_category" : isWarranty ? (claimType ? (returnReason ? "age_bucket" : "return_reason") : "claim_type") : serviceType ? "job_category" : "service_type";
 

@@ -39,6 +39,18 @@ const domainConfigs = {
       modelId: "model_id",
       variantId: "variant_id"
     }
+  },
+  sla: {
+    forecastDomain: "SLA",
+    forecastType: "sla_breach_risk",
+    tableName: "sla_forecast_data",
+    unitColumn: "forecast_units",
+    dimensionColumns: {
+      serviceType: "service_type",
+      jobCategory: "job_category",
+      modelId: "model_id",
+      variantId: "variant_id"
+    }
   }
 };
 
@@ -159,6 +171,10 @@ function groupRows(rows, domain) {
       upper_80: Number(row.upper_80),
       lower_95: Number(row.lower_95),
       upper_95: Number(row.upper_95),
+      expectedBreaches: row.expected_breaches === undefined ? null : Number(row.expected_breaches),
+      breachProbability: row.breach_probability === undefined ? null : toNumber(row.breach_probability),
+      riskScore: row.risk_score === undefined ? null : toNumber(row.risk_score),
+      riskLevel: row.risk_level ?? null,
       dataQuality: row.data_quality ?? "rich"
     });
   }
@@ -406,6 +422,48 @@ function buildActualBaseCte(domain, query, values) {
     `;
   }
 
+  if (domain === "sla") {
+    if (query.serviceType) {
+      values.push(query.serviceType);
+      sourceConditions.push(`msp.service_type = $${values.length}`);
+    }
+    if (query.jobCategory) {
+      values.push(query.jobCategory);
+      sourceConditions.push(`msp.job_category = $${values.length}`);
+    }
+    if (query.modelId) {
+      values.push(query.modelId);
+      sourceConditions.push(`msp.model_id = $${values.length}`);
+    }
+    if (query.variantId) {
+      values.push(query.variantId);
+      sourceConditions.push(`msp.variant_id = $${values.length}`);
+    }
+
+    return `
+      SELECT
+        sc.service_center_id,
+        sc.service_center_name,
+        sc.state,
+        sc.region,
+        NULL::VARCHAR AS part_id,
+        NULL::VARCHAR AS part_category,
+        msp.service_type,
+        msp.job_category,
+        NULL::VARCHAR AS claim_type,
+        NULL::VARCHAR AS return_reason,
+        NULL::VARCHAR AS age_bucket,
+        msp.model_id,
+        msp.variant_id,
+        msp.month,
+        SUM(msp.breached_orders)::NUMERIC AS actual_units
+      FROM monthly_sla_performance msp
+      JOIN service_centers sc ON sc.service_center_id = msp.service_center_id
+      WHERE ${sourceConditions.join(" AND ")}
+      GROUP BY sc.service_center_id, sc.service_center_name, sc.state, sc.region, msp.service_type, msp.job_category, msp.model_id, msp.variant_id, msp.month
+    `;
+  }
+
   if (query.serviceType) {
     values.push(query.serviceType);
     sourceConditions.push(`mov.service_type = $${values.length}`);
@@ -516,6 +574,10 @@ function normalizeObservation(row) {
 
 function resolveDomainRollupType(domain, query) {
   if (query.modelId || query.variantId) {
+    return null;
+  }
+
+  if (domain === "sla") {
     return null;
   }
 
@@ -782,6 +844,26 @@ function buildKpiActualSourceCte(domain, query, values, sourceConditions) {
     `;
   }
 
+  if (domain === "sla") {
+    addDomainSourceFilters("service", sourceConditions, values, query, "msp");
+
+    return `
+      SELECT
+        msp.month,
+        0::NUMERIC AS demanded_units,
+        0::NUMERIC AS fulfilled_units,
+        SUM(msp.completed_orders)::NUMERIC AS completed_orders,
+        SUM((msp.avg_resolution_hours / 24.0) * msp.completed_orders)::NUMERIC AS repair_days,
+        0::NUMERIC AS claim_count,
+        0::NUMERIC AS return_count,
+        SUM(msp.completed_orders * 1150)::NUMERIC AS actual_cost
+      FROM monthly_sla_performance msp
+      JOIN service_centers sc ON sc.service_center_id = msp.service_center_id
+      WHERE ${sourceConditions.join(" AND ")}
+      GROUP BY msp.month
+    `;
+  }
+
   addDomainSourceFilters(domain, sourceConditions, values, query, "so");
 
   return `
@@ -956,6 +1038,10 @@ export async function getDomainForecastPayload(domain, query, user, db = pool) {
             AVG(fd.validation_mae) AS validation_mae,
             AVG(fd.validation_rmse) AS validation_rmse,
             AVG(fd.validation_mape) AS validation_mape,
+            ${domain === "sla" ? "ROUND(SUM(COALESCE(fd.expected_breaches, fd.forecast_units)))::NUMERIC" : "NULL::NUMERIC"} AS expected_breaches,
+            ${domain === "sla" ? "AVG(fd.breach_probability)" : "NULL::NUMERIC"} AS breach_probability,
+            ${domain === "sla" ? "AVG(fd.risk_score)" : "NULL::NUMERIC"} AS risk_score,
+            ${domain === "sla" ? "CASE WHEN MAX(fd.risk_score) >= 75 THEN 'Critical' WHEN MAX(fd.risk_score) >= 50 THEN 'High' WHEN MAX(fd.risk_score) >= 25 THEN 'Medium' ELSE 'Low' END" : "NULL::VARCHAR"} AS risk_level,
             CASE WHEN COUNT(DISTINCT fd.data_quality) = 1 THEN MIN(fd.data_quality) ELSE 'sparse' END AS data_quality
           FROM ${sourceConfig.tableName} fd
           WHERE ${conditions.join(" AND ")}
@@ -1513,7 +1599,7 @@ export async function getDomainReferencePayload(domain, user, db = pool) {
     };
   }
 
-  if (domain === "service") {
+  if (domain === "service" || domain === "sla") {
     const [centersResult, optionsResult] = await Promise.all([
       db.query(
         `
@@ -1526,9 +1612,9 @@ export async function getDomainReferencePayload(domain, user, db = pool) {
       ),
       db.query(
         `
-        SELECT DISTINCT mov.service_type, mov.job_category
-        FROM monthly_service_order_volume mov
-        JOIN service_centers sc ON sc.service_center_id = mov.service_center_id
+        SELECT DISTINCT source.service_type, source.job_category
+        FROM ${domain === "sla" ? "monthly_sla_performance" : "monthly_service_order_volume"} source
+        JOIN service_centers sc ON sc.service_center_id = source.service_center_id
         WHERE ${sourceConditions.join(" AND ")}
         ORDER BY service_type, job_category
       `,
