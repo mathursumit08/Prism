@@ -214,6 +214,144 @@ const forecastMetricAnalyticsParameters = [
   }
 ];
 
+const aftersalesDomainParameter = {
+  in: "path",
+  name: "domain",
+  required: true,
+  schema: { enum: ["parts", "service", "warranty", "sla"], type: "string" },
+  description: "Aftersales forecast domain."
+};
+
+const aftersalesForecastParameters = [
+  {
+    in: "query",
+    name: "level",
+    schema: { enum: ["service_center", "state", "zone"], type: "string" },
+    description: "Aftersales hierarchy level."
+  },
+  {
+    in: "query",
+    name: "groupId",
+    schema: { type: "string" },
+    description: "Optional service center, state, or zone identifier."
+  },
+  {
+    in: "query",
+    name: "startDate",
+    schema: { format: "date", type: "string" },
+    description: "Inclusive forecast start date in YYYY-MM-DD format."
+  },
+  {
+    in: "query",
+    name: "endDate",
+    schema: { format: "date", type: "string" },
+    description: "Inclusive forecast end date in YYYY-MM-DD format."
+  },
+  {
+    in: "query",
+    name: "horizon",
+    schema: { minimum: 1, maximum: 60, type: "integer" },
+    description: "Maximum number of forecast months per series."
+  },
+  {
+    in: "query",
+    name: "breakdown",
+    schema: { enum: ["part_category", "part", "service_type", "job_category", "claim_type", "return_reason", "age_bucket"], type: "string" },
+    description: "Optional breakdown dimension for segment split and forecast data views."
+  },
+  { in: "query", name: "partId", schema: { type: "string" }, description: "Parts-domain SKU filter." },
+  { in: "query", name: "partCategory", schema: { type: "string" }, description: "Parts-domain category filter." },
+  { in: "query", name: "serviceType", schema: { type: "string" }, description: "Service or SLA service type filter." },
+  { in: "query", name: "jobCategory", schema: { type: "string" }, description: "Service or SLA job category filter." },
+  { in: "query", name: "claimType", schema: { type: "string" }, description: "Warranty claim type filter." },
+  { in: "query", name: "returnReason", schema: { type: "string" }, description: "Warranty return reason filter." },
+  { in: "query", name: "ageBucket", schema: { type: "string" }, description: "Warranty product or vehicle age bucket filter." },
+  { in: "query", name: "modelId", schema: { type: "string" }, description: "Vehicle model filter." },
+  { in: "query", name: "variantId", schema: { type: "string" }, description: "Vehicle variant filter." }
+];
+
+const aftersalesDiagnosticsParameters = [
+  aftersalesDomainParameter,
+  ...aftersalesForecastParameters.filter((parameter) => !["startDate", "endDate", "horizon", "breakdown"].includes(parameter.name)),
+  {
+    in: "query",
+    name: "window",
+    schema: { default: 6, enum: [1, 3, 6, 12, 24], type: "integer" },
+    description: "Number of recent actualized months to include."
+  },
+  {
+    in: "query",
+    name: "limit",
+    schema: { default: 500, minimum: 1, maximum: 1000, type: "integer" },
+    description: "Maximum matched observations to return."
+  }
+];
+
+const aftersalesForecastResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    domain: { enum: ["parts", "service", "warranty", "sla"], type: "string" },
+    forecastType: { type: "string" },
+    runId: { type: "integer" },
+    horizon: { type: "integer" },
+    completedAt: { format: "date-time", type: "string" },
+    filters: { type: "object" },
+    series: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          level: { type: "string" },
+          groupId: { type: "string" },
+          groupLabel: { type: "string" },
+          partId: { nullable: true, type: "string" },
+          partCategory: { nullable: true, type: "string" },
+          serviceType: { nullable: true, type: "string" },
+          jobCategory: { nullable: true, type: "string" },
+          claimType: { nullable: true, type: "string" },
+          returnReason: { nullable: true, type: "string" },
+          ageBucket: { nullable: true, type: "string" },
+          forecast: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                month: { format: "date", type: "string" },
+                units: { type: "number" },
+                unitsSold: { type: "number" },
+                lower_80: { type: "number" },
+                upper_80: { type: "number" },
+                lower_95: { type: "number" },
+                upper_95: { type: "number" },
+                expectedBreaches: { nullable: true, type: "number" },
+                breachProbability: { nullable: true, type: "number" },
+                riskScore: { nullable: true, type: "number" },
+                riskLevel: { nullable: true, enum: ["Low", "Medium", "High", "Critical"], type: "string" }
+              }
+            }
+          },
+          validation: { type: "object" }
+        }
+      }
+    }
+  }
+};
+
+const aftersalesReferenceResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    serviceCenters: { type: "array", items: { type: "object" } },
+    parts: { type: "array", items: { type: "object" } },
+    serviceTypes: { type: "array", items: { type: "string" } },
+    jobCategories: { type: "array", items: { type: "string" } },
+    claimTypes: { type: "array", items: { type: "string" } },
+    returnReasons: { type: "array", items: { type: "string" } },
+    ageBuckets: { type: "array", items: { type: "string" } }
+  }
+};
+
 const forecastMetricTrendResponseSchema = {
   type: "object",
   properties: {
@@ -374,7 +512,7 @@ const forecastEventSchema = {
   type: "object",
   properties: {
     eventId: { type: "integer" },
-    forecastDomain: { enum: ["Sales", "Parts", "Service", "Warranty"], type: "string" },
+    forecastDomain: { enum: ["Sales", "Parts", "Service", "Warranty", "SLA"], type: "string" },
     forecastType: { type: "string" },
     eventCode: { type: "string" },
     eventName: { type: "string" },
@@ -394,7 +532,7 @@ const forecastEventRequestSchema = {
   type: "object",
   required: ["forecast_domain", "event_code", "event_name", "event_type", "scope", "start_date", "end_date", "uplift_pct"],
   properties: {
-    forecast_domain: { enum: ["Sales", "Parts", "Service", "Warranty"], type: "string" },
+    forecast_domain: { enum: ["Sales", "Parts", "Service", "Warranty", "SLA"], type: "string" },
     event_code: { type: "string" },
     event_name: { type: "string" },
     event_type: { enum: ["Festive", "Regulatory", "Promotional", "Holiday", "Other"], type: "string" },
@@ -493,6 +631,32 @@ function buildLegacyForecastPath(summary, description) {
         403: {
           description: "Permission denied"
         }
+      }
+    }
+  };
+}
+
+function buildAftersalesDomainPath(summary, description, schema = aftersalesForecastResponseSchema, extraParameters = []) {
+  return {
+    get: {
+      summary,
+      description,
+      tags: ["Forecasts"],
+      security: [{ bearerAuth: [] }],
+      parameters: [aftersalesDomainParameter, ...extraParameters],
+      responses: {
+        200: {
+          description: "Aftersales forecast response",
+          content: {
+            "application/json": {
+              schema
+            }
+          }
+        },
+        400: { description: "Invalid query parameters" },
+        401: { description: "Authentication required" },
+        403: { description: "Permission denied" },
+        404: { description: "Unsupported domain or no completed run" }
       }
     }
   };
@@ -786,9 +950,17 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
       "/api/v1/forecasts/dashboard-cards": {
         get: {
           summary: "Forecast dashboard card settings",
-          description: "Returns the global card visibility settings used by the forecast dashboard.",
+          description: "Returns the global card visibility settings used by forecast dashboards. Use the optional domain query to fetch Sales, Parts, Service, Warranty, or SLA settings only.",
           tags: ["Forecasts"],
           security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "query",
+              name: "domain",
+              schema: { enum: ["Sales", "Parts", "Service", "Warranty", "SLA"], type: "string" },
+              description: "Optional dashboard card domain."
+            }
+          ],
           responses: {
             200: {
               description: "Forecast dashboard card settings response",
@@ -814,6 +986,55 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
       "/api/v1/forecasts/blended": buildForecastPath(
         "Blended forecasts",
         "Returns dealer-level forecasts blended with the dealer's allocated share of zone-level output. Dealer and zone contributions are weighted by inverse recent hold-out MAPE, so lower-MAPE model outputs receive higher weight."
+      ),
+      "/api/v1/forecasts/{domain}": buildAftersalesDomainPath(
+        "Aftersales domain forecast",
+        "Returns the latest completed Parts, Service, Warranty, or SLA forecast series for the selected service-center hierarchy and filters.",
+        aftersalesForecastResponseSchema,
+        aftersalesForecastParameters
+      ),
+      "/api/v1/forecasts/{domain}/references": buildAftersalesDomainPath(
+        "Aftersales domain references",
+        "Returns service centers and domain-specific filter values allowed for the signed-in user's access scope.",
+        aftersalesReferenceResponseSchema
+      ),
+      "/api/v1/forecasts/{domain}/actuals": buildAftersalesDomainPath(
+        "Aftersales domain actuals",
+        "Returns recent actual monthly history for Parts, Service, Warranty, or SLA in the same response shape used by dashboard actual-vs-forecast charts.",
+        aftersalesForecastResponseSchema,
+        aftersalesForecastParameters
+      ),
+      "/api/v1/forecasts/{domain}/diagnostics": buildAftersalesDomainPath(
+        "Aftersales domain diagnostics",
+        "Returns MAPE, MAE, RMSE, bias trend, matched observations, error buckets, and leaderboard rows for Parts, Service, Warranty, or SLA.",
+        {
+          type: "object",
+          properties: {
+            ok: { type: "boolean" },
+            domain: { enum: ["parts", "service", "warranty", "sla"], type: "string" },
+            filters: { type: "object" },
+            trend: forecastMetricTrendResponseSchema.properties.trend,
+            observations: forecastObservationResponseSchema.properties.observations,
+            buckets: forecastErrorHistogramResponseSchema.properties.buckets,
+            leaderboard: forecastAccuracyLeaderboardResponseSchema.properties.leaderboard
+          }
+        },
+        aftersalesDiagnosticsParameters.filter((parameter) => parameter.name !== "domain")
+      ),
+      "/api/v1/forecasts/{domain}/kpis": buildAftersalesDomainPath(
+        "Aftersales domain KPIs",
+        "Returns domain KPI cards such as fill rate, MTTR, return rate, and service cost actuals versus forecast.",
+        {
+          type: "object",
+          properties: {
+            ok: { type: "boolean" },
+            domain: { enum: ["parts", "service", "warranty", "sla"], type: "string" },
+            filters: { type: "object" },
+            window: { type: "object" },
+            kpis: { type: "object" }
+          }
+        },
+        aftersalesForecastParameters
       ),
       "/api/v1/forecasts/admin/status": {
         get: {
@@ -874,8 +1095,9 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
                       type: "array",
                       items: {
                         type: "object",
-                        required: ["key", "enabled"],
+                        required: ["domain", "key", "enabled"],
                         properties: {
+                          domain: { enum: ["Sales", "Parts", "Service", "Warranty", "SLA"], type: "string" },
                           key: { type: "string" },
                           enabled: { type: "boolean" }
                         }
@@ -941,6 +1163,67 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
             400: { description: "Invalid horizon" },
             401: { description: "Authentication required" },
             403: { description: "Permission denied" },
+            409: { description: "A regeneration run is already in progress" }
+          }
+        }
+      },
+      "/api/v1/forecasts/admin/{domain}/status": {
+        get: {
+          summary: "Domain forecast admin status",
+          description: "Returns run status, last completed run, last failed run, stored-row count, and current generation state for Parts, Service, Warranty, or SLA.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: [aftersalesDomainParameter],
+          responses: {
+            200: { description: "Current domain forecast administration status" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" },
+            404: { description: "Unsupported forecast domain" }
+          }
+        }
+      },
+      "/api/v1/forecasts/admin/{domain}/clear": {
+        post: {
+          summary: "Clear future domain forecast rows",
+          description: "Deletes future Parts, Service, Warranty, or SLA forecast rows that do not have matching source actual months.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: [aftersalesDomainParameter],
+          responses: {
+            200: { description: "Domain forecast rows cleared" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" },
+            404: { description: "Unsupported forecast domain" },
+            409: { description: "A regeneration run is already in progress" }
+          }
+        }
+      },
+      "/api/v1/forecasts/admin/{domain}/regenerate": {
+        post: {
+          summary: "Regenerate domain forecast",
+          description: "Starts background regeneration for Parts, Service, Warranty, or SLA.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: [aftersalesDomainParameter],
+          requestBody: {
+            required: false,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    horizon: { enum: [6, 12, 24], type: "integer" }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            202: { description: "Domain forecast regeneration started" },
+            400: { description: "Invalid horizon" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" },
+            404: { description: "Unsupported forecast domain" },
             409: { description: "A regeneration run is already in progress" }
           }
         }

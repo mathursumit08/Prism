@@ -149,6 +149,26 @@ router.get("/warranty/kpis", requirePermission(permissions.viewWarrantyForecast)
   await respondWithServiceCall(response, () => getDomainKpiPayload("warranty", request.query, request.user));
 });
 
+router.get("/sla", requirePermission(permissions.viewSlaForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getDomainForecastPayload("sla", request.query, request.user));
+});
+
+router.get("/sla/references", requirePermission(permissions.viewSlaForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getDomainReferencePayload("sla", request.user));
+});
+
+router.get("/sla/actuals", requirePermission(permissions.viewSlaForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getDomainActualsPayload("sla", request.query, request.user));
+});
+
+router.get("/sla/diagnostics", requirePermission(permissions.viewSlaForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getDomainDiagnosticsPayload("sla", request.query, request.user));
+});
+
+router.get("/sla/kpis", requirePermission(permissions.viewSlaForecast), async (request, response) => {
+  await respondWithServiceCall(response, () => getDomainKpiPayload("sla", request.query, request.user));
+});
+
 router.get("/admin/status", requirePermission(permissions.manageForecast), async (_request, response) => {
   await respondWithServiceCall(response, async () => ({
     ok: true,
@@ -293,7 +313,8 @@ function requireDashboardCardReadPermission(request, response, next) {
     Sales: permissions.viewForecast,
     Parts: permissions.viewPartsForecast,
     Service: permissions.viewServiceForecast,
-    Warranty: permissions.viewWarrantyForecast
+    Warranty: permissions.viewWarrantyForecast,
+    SLA: permissions.viewSlaForecast
   };
 
   if (request.query.domain && !domain) {
@@ -320,6 +341,7 @@ function requireDashboardCardReadPermission(request, response, next) {
     !request.user?.permissions?.some((permission) =>
       [permissions.viewForecast, permissions.viewPartsForecast, permissions.viewServiceForecast].includes(permission)
       || permission === permissions.viewWarrantyForecast
+      || permission === permissions.viewSlaForecast
     )
   ) {
     response.status(403).json({
@@ -337,7 +359,8 @@ function requireDomainManagePermission(request, response, next) {
     sales: permissions.manageForecast,
     parts: permissions.managePartsForecast,
     service: permissions.manageServiceForecast,
-    warranty: permissions.manageWarrantyForecast
+    warranty: permissions.manageWarrantyForecast,
+    sla: permissions.manageSlaForecast
   };
   const requiredPermission = permissionByDomain[request.params.domain];
 

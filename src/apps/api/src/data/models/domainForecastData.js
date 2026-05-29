@@ -82,6 +82,37 @@ const tableConfigs = {
       "data_quality"
     ],
     conflictColumns: ["forecast_type", "level", "group_id", "claim_type", "return_reason", "age_bucket", "model_id", "variant_id", "forecast_month"]
+  },
+  sla: {
+    tableName: "sla_forecast_data",
+    unitColumn: "forecast_units",
+    columns: [
+      "run_id",
+      "forecast_type",
+      "level",
+      "group_id",
+      "group_label",
+      "service_type",
+      "job_category",
+      "model_id",
+      "variant_id",
+      "forecast_month",
+      "forecast_units",
+      "expected_breaches",
+      "breach_probability",
+      "risk_score",
+      "risk_level",
+      "lower_80",
+      "upper_80",
+      "lower_95",
+      "upper_95",
+      "model_method",
+      "validation_mae",
+      "validation_rmse",
+      "validation_mape",
+      "data_quality"
+    ],
+    conflictColumns: ["forecast_type", "level", "group_id", "service_type", "job_category", "model_id", "variant_id", "forecast_month"]
   }
 };
 
@@ -113,6 +144,10 @@ function toColumnValue(record, column, unitField) {
     forecast_month: record.forecastMonth,
     forecast_units: record.forecastUnits,
     forecast_orders: record.forecastOrders,
+    expected_breaches: record.expectedBreaches ?? record.forecastUnits,
+    breach_probability: record.breachProbability,
+    risk_score: record.riskScore,
+    risk_level: record.riskLevel,
     lower_80: record.lower80,
     upper_80: record.upper80,
     lower_95: record.lower95,
@@ -188,7 +223,9 @@ export const DomainForecastData = {
       ? "monthly_service_parts_demand"
       : domain === "service"
         ? "monthly_service_order_volume"
-        : "monthly_warranty_return_volume";
+        : domain === "sla"
+          ? "monthly_sla_performance"
+          : "monthly_warranty_return_volume";
     const monthColumn = "month";
     const result = await db.query(
       `

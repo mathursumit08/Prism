@@ -690,6 +690,89 @@ async function fetchServiceRows({ serviceType, jobCategory, modelId, variantId, 
   return result.rows;
 }
 
+async function fetchSlaRows({ serviceType, jobCategory, modelId, variantId, historyEndMonth } = {}, db = pool) {
+  const values = [];
+  const conditions = ["sc.is_active = TRUE"];
+  const includeModel = Boolean(modelId || variantId);
+
+  if (serviceType) {
+    values.push(serviceType);
+    conditions.push(`msp.service_type = $${values.length}`);
+  }
+
+  if (jobCategory) {
+    values.push(jobCategory);
+    conditions.push(`msp.job_category = $${values.length}`);
+  }
+
+  if (modelId) {
+    values.push(modelId);
+    conditions.push(`msp.model_id = $${values.length}`);
+  }
+
+  if (variantId) {
+    values.push(variantId);
+    conditions.push(`msp.variant_id = $${values.length}`);
+  }
+
+  if (historyEndMonth) {
+    values.push(historyEndMonth);
+    conditions.push(`msp.month <= $${values.length}::DATE`);
+  }
+
+  const result = await db.query(
+    `
+      SELECT
+        sc.service_center_id,
+        sc.service_center_name,
+        sc.state,
+        sc.region,
+        msp.service_type,
+        msp.job_category,
+        ${includeModel ? "msp.model_id" : "NULL::VARCHAR AS model_id"},
+        ${includeModel ? "msp.variant_id" : "NULL::VARCHAR AS variant_id"},
+        TO_CHAR(msp.month, 'YYYY-MM-01') AS month,
+        SUM(msp.breached_orders)::INTEGER AS units
+      FROM monthly_sla_performance msp
+      JOIN service_centers sc ON sc.service_center_id = msp.service_center_id
+      WHERE ${conditions.join(" AND ")}
+      GROUP BY sc.service_center_id, sc.service_center_name, sc.state, sc.region, msp.service_type, msp.job_category, ${includeModel ? "msp.model_id, msp.variant_id," : ""} msp.month
+      ORDER BY sc.service_center_id, msp.service_type, msp.job_category, msp.month
+    `,
+    values
+  );
+
+  return result.rows;
+}
+
+function scoreSlaRisk(point, series) {
+  // Keep the first SLA release explainable: expected breaches drive the score,
+  // while wide intervals and weaker validation lift the risk level.
+  const expectedBreaches = Math.max(0, point.units || 0);
+  const intervalWidth = Math.max(0, (point.upper95 ?? expectedBreaches) - (point.lower95 ?? expectedBreaches));
+  const uncertaintyRatio = expectedBreaches > 0 ? intervalWidth / expectedBreaches : intervalWidth > 0 ? 1 : 0;
+  const validationMape = Number(series.validation?.mape ?? 0);
+  const riskScore = clamp((expectedBreaches * 6) + (uncertaintyRatio * 18) + (validationMape * 0.35), 0, 100);
+
+  return {
+    expectedBreaches: roundUnits(expectedBreaches),
+    breachProbability: Number(clamp(expectedBreaches / 100, 0, 1).toFixed(4)),
+    riskScore: Number(riskScore.toFixed(2)),
+    riskLevel: riskScore >= 75 ? "Critical" : riskScore >= 50 ? "High" : riskScore >= 25 ? "Medium" : "Low"
+  };
+}
+
+function enrichSlaRiskSeries(series) {
+  return series.map((item) => ({
+    ...item,
+    method: `${item.method} + SLA-risk-score`,
+    forecast: item.forecast.map((point) => ({
+      ...point,
+      ...scoreSlaRisk(point, item)
+    }))
+  }));
+}
+
 function buildForecastForBaseSeries(baseSeries, horizon, preferredMethod) {
   return baseSeries.map((series) => {
     const values = series.history.map((point) => point.units);
@@ -844,6 +927,44 @@ export async function buildServiceOrderForecast({ horizon, scope = {}, db = pool
       {
         level: "zone",
         series: aggregateSeries(serviceCenterSeries, "zone")
+      }
+    ]
+  };
+}
+
+export async function buildSlaBreachRiskForecast({ horizon, scope = {}, db = pool } = {}) {
+  const safeHorizon = clampHorizon(horizon);
+  const rows = await fetchSlaRows(scope, db);
+  const baseSeries = rowsToSeries(rows, {
+    buildKey: (row) => [row.service_center_id, row.service_type ?? "", row.job_category ?? "", row.model_id ?? "", row.variant_id ?? ""].join("|"),
+    buildIdentity: (row) => ({
+      serviceCenterId: row.service_center_id,
+      serviceCenterName: row.service_center_name,
+      state: row.state,
+      zone: row.region,
+      serviceType: row.service_type,
+      jobCategory: row.job_category,
+      modelId: row.model_id,
+      variantId: row.variant_id
+    })
+  });
+  const serviceCenterSeries = enrichSlaRiskSeries(buildForecastForBaseSeries(baseSeries, safeHorizon, "moving-average"));
+
+  return {
+    horizon: safeHorizon,
+    scope,
+    levels: [
+      {
+        level: "service_center",
+        series: serviceCenterSeries
+      },
+      {
+        level: "state",
+        series: enrichSlaRiskSeries(aggregateSeries(serviceCenterSeries, "state"))
+      },
+      {
+        level: "zone",
+        series: enrichSlaRiskSeries(aggregateSeries(serviceCenterSeries, "zone"))
       }
     ]
   };

@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import { pool } from "../db.js";
 import { buildBaselineForecast } from "../forecasting/baselineForecast.js";
-import { buildPartsDemandForecast, buildServiceOrderForecast, buildWarrantyReturnsForecast } from "../forecasting/domainForecasts.js";
+import { buildPartsDemandForecast, buildServiceOrderForecast, buildSlaBreachRiskForecast, buildWarrantyReturnsForecast } from "../forecasting/domainForecasts.js";
 import { DomainForecastData, DomainForecastRollup, ForecastData, ForecastEventCalendar, ForecastRun } from "../data/models/index.js";
 import { ForecastCacheService } from "../services/forecastCacheService.js";
 import { ForecastBiasService } from "../services/forecastBiasService.js";
@@ -14,9 +14,11 @@ const SALES_DOMAIN = "Sales";
 const PARTS_DOMAIN = "Parts";
 const SERVICE_DOMAIN = "Service";
 const WARRANTY_DOMAIN = "Warranty";
+const SLA_DOMAIN = "SLA";
 const PARTS_FORECAST_TYPE = "demand";
 const SERVICE_FORECAST_TYPE = "order_volume";
 const WARRANTY_FORECAST_TYPE = "warranty_returns";
+const SLA_FORECAST_TYPE = "sla_breach_risk";
 const DEFAULT_HORIZON = 6;
 const MAX_BATCH_SIZE = 2500;
 const CALIBRATION_TOLERANCE_PERCENTAGE_POINTS = 2;
@@ -24,7 +26,8 @@ const workerLockId = 46013520;
 const domainWorkerLockIds = {
   [PARTS_DOMAIN]: 46013521,
   [SERVICE_DOMAIN]: 46013522,
-  [WARRANTY_DOMAIN]: 46013523
+  [WARRANTY_DOMAIN]: 46013523,
+  [SLA_DOMAIN]: 46013524
 };
 const currentFile = fileURLToPath(import.meta.url);
 
@@ -192,10 +195,17 @@ function applyDomainPointUplift(point, series, eventCalendar) {
   const totalUpliftPct = matchingEvents.reduce((sum, event) => sum + Number(event.uplift_pct), 0);
   const upliftFactor = 1 + totalUpliftPct / 100;
   const upliftedUnits = Math.max(0, Math.round(point.units * upliftFactor));
+  const upliftedRiskScore = Number.isFinite(Number(point.riskScore))
+    ? Math.min(100, Number(point.riskScore) * upliftFactor)
+    : null;
 
   return {
     ...point,
     units: upliftedUnits,
+    expectedBreaches: point.expectedBreaches === undefined ? undefined : upliftedUnits,
+    breachProbability: point.breachProbability === undefined ? undefined : Number(Math.min(1, upliftedUnits / 100).toFixed(4)),
+    riskScore: upliftedRiskScore === null ? point.riskScore : Number(upliftedRiskScore.toFixed(2)),
+    riskLevel: upliftedRiskScore === null ? point.riskLevel : riskLevelFromScore(upliftedRiskScore),
     lower80: Math.max(0, Math.round((point.lower80 ?? point.units) * upliftFactor)),
     upper80: Math.max(0, Math.round((point.upper80 ?? point.units) * upliftFactor)),
     lower95: Math.max(0, Math.round((point.lower95 ?? point.units) * upliftFactor)),
@@ -562,6 +572,9 @@ function aggregateAdjustedDomainSeries(baseSeries, level) {
         forecast: series.forecast.map((point) => ({
           month: point.month,
           units: 0,
+          expectedBreaches: 0,
+          riskScore: 0,
+          riskScorePoints: [],
           lower80: 0,
           upper80: 0,
           lower95: 0,
@@ -573,6 +586,10 @@ function aggregateAdjustedDomainSeries(baseSeries, level) {
     const aggregate = grouped.get(key);
     series.forecast.forEach((point, index) => {
       aggregate.forecast[index].units += point.units;
+      aggregate.forecast[index].expectedBreaches += point.expectedBreaches ?? point.units ?? 0;
+      if (Number.isFinite(Number(point.riskScore))) {
+        aggregate.forecast[index].riskScorePoints.push(Number(point.riskScore));
+      }
       aggregate.forecast[index].lower80 += point.lower80 ?? point.units;
       aggregate.forecast[index].upper80 += point.upper80 ?? point.units;
       aggregate.forecast[index].lower95 += point.lower95 ?? point.units;
@@ -580,7 +597,21 @@ function aggregateAdjustedDomainSeries(baseSeries, level) {
     });
   }
 
-  return [...grouped.values()];
+  return [...grouped.values()].map((series) => ({
+    ...series,
+    forecast: series.forecast.map((point) => {
+      const riskScore = point.riskScorePoints.length
+        ? point.riskScorePoints.reduce((sum, value) => sum + value, 0) / point.riskScorePoints.length
+        : Math.min(100, (point.expectedBreaches || point.units || 0) * 6);
+
+      return {
+        ...point,
+        riskScore: Number(riskScore.toFixed(2)),
+        breachProbability: Number(Math.min(1, (point.expectedBreaches || point.units || 0) / 100).toFixed(4)),
+        riskLevel: riskLevelFromScore(riskScore)
+      };
+    })
+  }));
 }
 
 function buildAdjustedDomainForecastLevels(serviceCenterSeries, eventCalendar) {
@@ -603,6 +634,26 @@ function buildAdjustedDomainForecastLevels(serviceCenterSeries, eventCalendar) {
 }
 
 async function fetchServiceForecastScopes(db = pool) {
+  await db.query("SELECT 1");
+  return [
+    {
+      serviceType: null,
+      jobCategory: null,
+      modelId: null,
+      variantId: null
+    }
+  ];
+}
+
+function riskLevelFromScore(score) {
+  const numericScore = Number(score || 0);
+  if (numericScore >= 75) return "Critical";
+  if (numericScore >= 50) return "High";
+  if (numericScore >= 25) return "Medium";
+  return "Low";
+}
+
+async function fetchSlaForecastScopes(db = pool) {
   await db.query("SELECT 1");
   return [
     {
@@ -683,12 +734,18 @@ function flattenDomainForecast({ domain, runId, scope, forecast }) {
     ? PARTS_FORECAST_TYPE
     : domain === SERVICE_DOMAIN
       ? SERVICE_FORECAST_TYPE
-      : WARRANTY_FORECAST_TYPE;
+      : domain === SLA_DOMAIN
+        ? SLA_FORECAST_TYPE
+        : WARRANTY_FORECAST_TYPE;
   const records = [];
 
   for (const levelResult of forecast.levels) {
     for (const series of levelResult.series) {
       for (const [index, point] of series.forecast.entries()) {
+        const units = roundUnits(point.units);
+        const slaRiskScore = domain === SLA_DOMAIN
+          ? Number(point.riskScore ?? Math.min(100, units * 6))
+          : point.riskScore ?? null;
         records.push({
           runId,
           forecastType,
@@ -705,8 +762,12 @@ function flattenDomainForecast({ domain, runId, scope, forecast }) {
           modelId: series.modelId ?? scope.modelId ?? null,
           variantId: series.variantId ?? scope.variantId ?? null,
           forecastMonth: point.month,
-          forecastUnits: roundUnits(point.units),
-          forecastOrders: roundUnits(point.units),
+          forecastUnits: units,
+          forecastOrders: units,
+          expectedBreaches: point.expectedBreaches ?? units,
+          breachProbability: point.breachProbability ?? null,
+          riskScore: slaRiskScore,
+          riskLevel: domain === SLA_DOMAIN ? (point.riskLevel ?? riskLevelFromScore(slaRiskScore)) : point.riskLevel ?? null,
           lower80: roundUnits(point.lower80 ?? point.units),
           upper80: roundUnits(point.upper80 ?? point.units),
           lower95: roundUnits(point.lower95 ?? point.units),
@@ -1110,6 +1171,20 @@ export async function runWarrantyForecastWorker({
   });
 }
 
+export async function runSlaForecastWorker({
+  horizon = parseHorizon(process.env.FORECAST_HORIZON_MONTHS),
+  onProgress
+} = {}) {
+  return runDomainForecastWorker({
+    domain: SLA_DOMAIN,
+    forecastType: SLA_FORECAST_TYPE,
+    horizon,
+    fetchScopes: fetchSlaForecastScopes,
+    buildForecast: (scope, db) => buildSlaBreachRiskForecast({ horizon, scope, db }),
+    onProgress
+  });
+}
+
 export async function runAllForecastWorkers({
   horizon = parseHorizon(process.env.FORECAST_HORIZON_MONTHS),
   onProgress
@@ -1130,12 +1205,17 @@ export async function runAllForecastWorkers({
     horizon,
     onProgress: (progress) => reportProgress(onProgress, { ...progress, forecastDomain: WARRANTY_DOMAIN })
   });
+  const sla = await runSlaForecastWorker({
+    horizon,
+    onProgress: (progress) => reportProgress(onProgress, { ...progress, forecastDomain: SLA_DOMAIN })
+  });
 
   return {
     sales,
     parts,
     service,
-    warranty
+    warranty,
+    sla
   };
 }
 
@@ -1255,11 +1335,15 @@ async function runDomainForecastWorker({
     const dataDomain = domainDataKey(domain);
     const removed = await DomainForecastData.clearFuture(dataDomain, forecastType, client);
     const inserted = await insertDomainInBatches(dataDomain, allRecords, client, { onConflict: false });
-    await DomainForecastRollup.refresh({
-      forecastDomain: domain,
-      runId: run.run_id,
-      forecastType
-    }, client);
+    // SLA stores risk-specific fields that do not fit the shared unit-rollup
+    // table yet, so dashboard queries read directly from sla_forecast_data.
+    if (domain !== SLA_DOMAIN) {
+      await DomainForecastRollup.refresh({
+        forecastDomain: domain,
+        runId: run.run_id,
+        forecastType
+      }, client);
+    }
     const calibration = summarizeCalibration(allCalibrationSummaries);
     const completedRun = await ForecastRun.complete(run.run_id, calibration, client);
 
@@ -1340,7 +1424,8 @@ if (process.argv[1] === currentFile) {
     sales: runForecastWorker,
     parts: runPartsForecastWorker,
     service: runServiceForecastWorker,
-    warranty: runWarrantyForecastWorker
+    warranty: runWarrantyForecastWorker,
+    sla: runSlaForecastWorker
   };
   const runner = runnerByDomain[requestedDomain] ?? runAllForecastWorkers;
 

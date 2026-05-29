@@ -8,16 +8,19 @@ export const permissions = {
   viewServiceForecast: "View Service Forecast",
   manageServiceForecast: "Manage Service Forecast",
   viewWarrantyForecast: "View Warranty Forecast",
-  manageWarrantyForecast: "Manage Warranty Forecast"
+  manageWarrantyForecast: "Manage Warranty Forecast",
+  viewSlaForecast: "View SLA Forecast",
+  manageSlaForecast: "Manage SLA Forecast"
 };
 
-const domains = ["Sales", "Parts", "Service", "Warranty"];
+const domains = ["Sales", "Parts", "Service", "Warranty", "SLA"];
 
 export function normalizeAccessDomain(domain = "Sales") {
   const normalized = String(domain || "").trim().toLowerCase();
   if (normalized === "parts") return "Parts";
   if (normalized === "service") return "Service";
   if (normalized === "warranty") return "Warranty";
+  if (normalized === "sla") return "SLA";
   return "Sales";
 }
 
@@ -102,7 +105,8 @@ export function buildUserProfile(user) {
     serviceCenterId:
       firstValueForType(scopesForDomain(profile, "Parts"), "Service Center") ||
       firstValueForType(scopesForDomain(profile, "Service"), "Service Center") ||
-      firstValueForType(scopesForDomain(profile, "Warranty"), "Service Center"),
+      firstValueForType(scopesForDomain(profile, "Warranty"), "Service Center") ||
+      firstValueForType(scopesForDomain(profile, "SLA"), "Service Center"),
     forecastLevels: inferForecastLevels(profile)
   };
 }
@@ -250,5 +254,6 @@ export function domainForPermission(permission) {
   if (permission === permissions.viewPartsForecast || permission === permissions.managePartsForecast) return "Parts";
   if (permission === permissions.viewServiceForecast || permission === permissions.manageServiceForecast) return "Service";
   if (permission === permissions.viewWarrantyForecast || permission === permissions.manageWarrantyForecast) return "Warranty";
+  if (permission === permissions.viewSlaForecast || permission === permissions.manageSlaForecast) return "SLA";
   return domains[0];
 }

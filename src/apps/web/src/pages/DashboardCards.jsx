@@ -132,7 +132,7 @@ export default function DashboardCardsPage() {
         <div>
           <p className="eyebrow">Dashboard Cards</p>
           <h1>Choose which forecast cards appear by dashboard.</h1>
-          <p className="admin-header-copy">Changes apply globally for users who can view Sales, Parts, Service, or Warranty forecast dashboards.</p>
+          <p className="admin-header-copy">Changes apply globally for users who can view Sales, Parts, Service, Warranty, or SLA forecast dashboards.</p>
         </div>
         <div className="admin-hero-card">
           <span className="status-badge healthy">Admin only</span>
@@ -167,7 +167,7 @@ export default function DashboardCardsPage() {
           <p className="notice compact-notice">Loading dashboard cards...</p>
         ) : (
           <div className="dashboard-card-groups">
-            {["Sales", "Parts", "Service", "Warranty"].map((domain) => (
+            {["Sales", "Parts", "Service", "Warranty", "SLA"].map((domain) => (
               <section key={domain} className="dashboard-card-group">
                 <h3>{domain}</h3>
                 {Object.entries(groupedCards[domain] || {}).map(([category, cards]) => (
