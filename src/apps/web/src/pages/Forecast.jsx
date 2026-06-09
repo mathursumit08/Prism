@@ -1901,12 +1901,14 @@ export default function ForecastPage() {
       <section className="forecast-chart-pair" aria-label="Forecast graph and regional segment split">
       {cards.forecastGraph && (
       <article className="forecast-panel">
-        <div className="panel-heading">
+        <div className="panel-heading with-context-pill">
           <div>
             <InfoEyebrow info="Shows the monthly forecast for the selected level and filters. Use the interval selector in the page header to switch between point forecast and uncertainty bands.">Forecast graph</InfoEyebrow>
             <h2>Monthly units by {availableLevels.find((item) => item.value === level)?.label.toLowerCase()}</h2>
           </div>
-          <span className="source-pill interval-context">{getBandLabel(intervalMode)}</span>
+          <div className="panel-pill-group">
+            <span className="source-pill interval-context">{getBandLabel(intervalMode)}</span>
+          </div>
         </div>
 
         {forecastState.error && <p className="notice">{forecastState.error}</p>}
@@ -1945,7 +1947,7 @@ export default function ForecastPage() {
 
       {cards.regionalSegmentSplit && (
       <article className="forecast-panel">
-        <div className="panel-heading">
+        <div className="panel-heading with-context-pill">
           <div>
             <InfoEyebrow info="Shows segment-level forecast lines within the selected region or scope. Use it to compare expected demand movement by segment.">Regional segment split</InfoEyebrow>
             <h2>Segments within {breakdownContextLabel}</h2>
@@ -1988,12 +1990,14 @@ export default function ForecastPage() {
 
       {activeSection === "tables" && cards.segmentBreakdown && hasBreakdownData && (
         <section className="data-table" aria-label="Segment breakdown data table">
-          <div className="panel-heading compact">
+          <div className="panel-heading compact with-context-pill">
             <div>
               <InfoEyebrow info="Monthly forecast values by segment, including interval ranges when an uncertainty band is selected.">Segment breakdown</InfoEyebrow>
               <h2>Next {horizonMonths} months for {breakdownContextLabel}</h2>
             </div>
-            <span className="source-pill interval-context">{getBandLabel(intervalMode)}</span>
+            <div className="panel-pill-group">
+              <span className="source-pill interval-context">{getBandLabel(intervalMode)}</span>
+            </div>
           </div>
           <div className="table-scroll">
             <table>
