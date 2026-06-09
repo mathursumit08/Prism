@@ -5,7 +5,6 @@ import {
   recordLogin,
   recordLogout,
   revokeRefreshToken,
-  rotateRefreshToken,
   storeRefreshToken,
   touchRefreshToken
 } from "../auth/authService.js";
@@ -75,16 +74,25 @@ router.post("/refresh", async (request, response) => {
   const currentRefreshToken = request.cookies?.[refreshCookieName];
 
   if (!currentRefreshToken) {
+    console.warn("Auth refresh failed: refresh cookie was not sent", {
+      origin: request.headers.origin || null,
+      host: request.headers.host || null,
+      forwardedHost: request.headers["x-forwarded-host"] || null,
+      forwardedProto: request.headers["x-forwarded-proto"] || null,
+      hasCookieHeader: Boolean(request.headers.cookie)
+    });
     response.status(401).json({
       ok: false,
-      error: "Refresh token is required"
+      error: "Refresh token is required",
+      reason: "refresh-cookie-missing"
     });
     return;
   }
 
   try {
     const payload = verifyRefreshToken(currentRefreshToken);
-    const tokenOwner = await touchRefreshToken(currentRefreshToken);
+    const nextRefreshExpiry = getRefreshTokenExpiryDate();
+    const tokenOwner = await touchRefreshToken(currentRefreshToken, nextRefreshExpiry);
 
     if (!tokenOwner || tokenOwner !== payload.sub) {
       clearRefreshCookie(response);
@@ -105,11 +113,7 @@ router.post("/refresh", async (request, response) => {
       return;
     }
 
-    const nextRefreshToken = signRefreshToken(user.username);
-    const nextRefreshExpiry = getRefreshTokenExpiryDate();
-    await rotateRefreshToken(currentRefreshToken, nextRefreshToken, user.username, nextRefreshExpiry);
-
-    response.cookie(refreshCookieName, nextRefreshToken, getRefreshCookieOptions());
+    response.cookie(refreshCookieName, currentRefreshToken, getRefreshCookieOptions());
     response.json({
       ok: true,
       accessToken: signAccessToken(user.username),
@@ -118,9 +122,18 @@ router.post("/refresh", async (request, response) => {
   } catch {
     await revokeRefreshToken(currentRefreshToken);
     clearRefreshCookie(response);
+    console.warn("Auth refresh failed: refresh token was invalid or expired", {
+      origin: request.headers.origin || null,
+      host: request.headers.host || null,
+      forwardedHost: request.headers["x-forwarded-host"] || null,
+      forwardedProto: request.headers["x-forwarded-proto"] || null,
+      hasCookieHeader: Boolean(request.headers.cookie),
+      hasRefreshCookie: true
+    });
     response.status(401).json({
       ok: false,
-      error: "Refresh token is invalid or expired"
+      error: "Refresh token is invalid or expired",
+      reason: "refresh-token-invalid"
     });
   }
 });
