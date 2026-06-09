@@ -150,17 +150,19 @@ export async function rotateRefreshToken(previousToken, nextToken, username, exp
   await storeRefreshToken(username, nextToken, expiresAt);
 }
 
-export async function touchRefreshToken(refreshToken) {
+export async function touchRefreshToken(refreshToken, expiresAt) {
   const result = await pool.query(
     `
       UPDATE user_refresh_tokens
-      SET last_used_at = NOW()
+      SET
+        last_used_at = NOW(),
+        expires_at = COALESCE($2, expires_at)
       WHERE token_hash = $1
         AND revoked_at IS NULL
         AND expires_at > NOW()
       RETURNING username
     `,
-    [hashRefreshToken(refreshToken)]
+    [hashRefreshToken(refreshToken), expiresAt]
   );
 
   return result.rows[0]?.username ?? null;

@@ -9,6 +9,8 @@ const refreshCookieSecure =
     ? process.env.NODE_ENV === "production"
     : process.env.AUTH_COOKIE_SECURE === "true";
 const refreshCookieSameSite = process.env.AUTH_COOKIE_SAME_SITE || "lax";
+const refreshCookieDomain = process.env.AUTH_COOKIE_DOMAIN || undefined;
+const refreshCookiePath = process.env.AUTH_COOKIE_PATH || "/api/auth";
 
 export function signAccessToken(username) {
   return signJwt({ sub: username, type: "access" }, accessSecret, accessTokenTtlSeconds);
@@ -47,7 +49,8 @@ export function getRefreshCookieOptions() {
     httpOnly: true,
     sameSite: refreshCookieSameSite,
     secure: refreshCookieSecure,
-    path: "/api/auth",
+    domain: refreshCookieDomain,
+    path: refreshCookiePath,
     maxAge: refreshTokenTtlSeconds * 1000
   };
 }
