@@ -1225,12 +1225,12 @@ export default function DomainForecastPage({ domain }) {
             <section className="forecast-chart-pair" aria-label={`${domain} forecast graph and regional segment split`}>
               {cards.forecastGraph && (
               <article className={`forecast-panel ${!cards.regionalSegmentSplit ? "full-width-panel" : ""}`}>
-                <div className="panel-heading">
+                <div className="panel-heading with-context-pill">
                   <div>
                     <InfoEyebrow info="Shows the monthly forecast for the selected level and filters. Use the interval selector in the page header to switch between point forecast and uncertainty bands.">Forecast graph</InfoEyebrow>
                     <h2>Monthly {unitLabel.toLowerCase()} by {activeLevelLabel.toLowerCase()}</h2>
                   </div>
-                  <div className="panel-pill-group"><span className="source-pill interval-context">{intervalMode === "point" ? "Point only" : `${intervalMode}% band`}</span></div>
+                  <div className="panel-pill-group"><span className="source-pill interval-context">{getBandLabel(intervalMode)}</span></div>
                 </div>
                 <ForecastChart series={visibleSeries} hoveredGroupId={hoveredGroupId} onHoverGroup={setHoveredGroupId} intervalMode={intervalMode} unitLabel={unitLabel} message={chartMessage} />
                 {hasForecastData && (
@@ -1252,13 +1252,13 @@ export default function DomainForecastPage({ domain }) {
               )}
               {cards.regionalSegmentSplit && (
               <article className={`forecast-panel ${!cards.forecastGraph ? "full-width-panel" : ""}`}>
-                <div className="panel-heading">
+                <div className="panel-heading with-context-pill">
                   <div>
                     <InfoEyebrow info={isParts ? "Shows part-category forecast lines within the selected region or scope. Use it to compare expected demand movement by category." : isWarranty ? "Shows warranty and return segment forecast lines within the selected region or scope." : "Shows service-segment forecast lines within the selected region or scope. Use it to compare expected order movement by service segment."}>Regional segment split</InfoEyebrow>
                     <h2>{isParts ? `Part categories within ${scopeLabel}` : isWarranty ? `Warranty segments within ${scopeLabel}` : `Service segments within ${scopeLabel}`}</h2>
                     <p className="panel-subcopy">{productLabel}</p>
                   </div>
-                  <div className="panel-pill-group"><span className="source-pill interval-context">{intervalMode === "point" ? "Point only" : `${intervalMode}% band`}</span></div>
+                  <div className="panel-pill-group"><span className="source-pill interval-context">{getBandLabel(intervalMode)}</span></div>
                 </div>
                 <ForecastChart series={visibleBreakdownSeries} hoveredGroupId={hoveredBreakdownId} onHoverGroup={setHoveredBreakdownId} intervalMode={intervalMode} unitLabel={unitLabel} message={breakdownMessage} />
                 {hasBreakdownData && (
@@ -1336,12 +1336,12 @@ export default function DomainForecastPage({ domain }) {
           <>
             {cards.segmentBreakdown && hasBreakdownData && (
             <section className="data-table" aria-label={`${domain} segment breakdown data table`}>
-              <div className="panel-heading compact">
+              <div className="panel-heading compact with-context-pill">
                 <div>
                   <InfoEyebrow info="Monthly forecast values by segment, including interval ranges when an uncertainty band is selected.">Segment breakdown</InfoEyebrow>
                   <h2>Next {horizonMonths} months for {scopeLabel}</h2>
                 </div>
-                <span className="source-pill interval-context">{getBandLabel(intervalMode)}</span>
+                <div className="panel-pill-group"><span className="source-pill interval-context">{getBandLabel(intervalMode)}</span></div>
               </div>
               <div className="table-scroll">
                 <table>

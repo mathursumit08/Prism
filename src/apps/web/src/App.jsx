@@ -225,6 +225,7 @@ export default function App() {
   const { apiFetch, booting, isAuthenticated, logout, user } = useAuth();
   const [page, setPage] = useState(() => resolvePageFromHash(window.location.hash));
   const [currentHash, setCurrentHash] = useState(() => window.location.hash || "#forecast");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [dashboardCardVisibilityByDomain, setDashboardCardVisibilityByDomain] = useState(createDefaultDashboardCardVisibilityByDomain);
   const canViewForecast = user?.permissions?.includes("View Forecast");
   const canViewPartsForecast = user?.permissions?.includes("View Parts Forecast");
@@ -359,6 +360,12 @@ export default function App() {
 
     window.location.hash = hashByPage[nextPage] || "home";
     setPage(nextPage);
+  }
+
+  function handleSidebarLinkClick(hash) {
+    setCurrentHash(hash);
+    setPage(resolvePageFromHash(hash));
+    setIsMobileMenuOpen(false);
   }
 
   useEffect(() => {
@@ -506,14 +513,25 @@ export default function App() {
   ];
   return (
     <main className="app-shell">
-      <aside className="app-sidebar" aria-label="Primary navigation">
+      <aside className={`app-sidebar ${isMobileMenuOpen ? "is-open" : ""}`} aria-label="Primary navigation">
         <div className="app-sidebar-brand">
           <img
             src="/resources/images/prism-sales-forecasting-logo.png"
             alt="PRISM Sales Forecasting"
           />
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setIsMobileMenuOpen((open) => !open)}
+            aria-expanded={isMobileMenuOpen}
+            aria-controls="primary-sidebar-nav"
+          >
+            <span />
+            <span />
+            <span />
+          </button>
         </div>
-        <div className="app-sidebar-top">
+        <div className="app-sidebar-top" id="primary-sidebar-nav">
           <nav className="app-sidebar-nav">
             {forecastNavItems.length > 0 && (
               <>
@@ -527,10 +545,7 @@ export default function App() {
                         : ""
                     }
                     href={item.hash}
-                    onClick={() => {
-                      setCurrentHash(item.hash);
-                      setPage(resolvePageFromHash(item.hash));
-                    }}
+                    onClick={() => handleSidebarLinkClick(item.hash)}
                   >
                     {item.label}
                   </a>
@@ -546,10 +561,7 @@ export default function App() {
                     key={item.hash}
                     className={currentHash === item.hash || (!currentHash && item.hash === "#service-dashboard") ? "active" : ""}
                     href={item.hash}
-                    onClick={() => {
-                      setCurrentHash(item.hash);
-                      setPage(resolvePageFromHash(item.hash));
-                    }}
+                    onClick={() => handleSidebarLinkClick(item.hash)}
                   >
                     {item.label}
                   </a>
@@ -565,10 +577,7 @@ export default function App() {
                     key={item.hash}
                     className={currentHash === item.hash || (!currentHash && item.hash === "#parts-dashboard") ? "active" : ""}
                     href={item.hash}
-                    onClick={() => {
-                      setCurrentHash(item.hash);
-                      setPage(resolvePageFromHash(item.hash));
-                    }}
+                    onClick={() => handleSidebarLinkClick(item.hash)}
                   >
                     {item.label}
                   </a>
@@ -584,10 +593,7 @@ export default function App() {
                     key={item.hash}
                     className={currentHash === item.hash || (!currentHash && item.hash === "#warranty-dashboard") ? "active" : ""}
                     href={item.hash}
-                    onClick={() => {
-                      setCurrentHash(item.hash);
-                      setPage(resolvePageFromHash(item.hash));
-                    }}
+                    onClick={() => handleSidebarLinkClick(item.hash)}
                   >
                     {item.label}
                   </a>
@@ -603,10 +609,7 @@ export default function App() {
                     key={item.hash}
                     className={currentHash === item.hash || (!currentHash && item.hash === "#sla-dashboard") ? "active" : ""}
                     href={item.hash}
-                    onClick={() => {
-                      setCurrentHash(item.hash);
-                      setPage(resolvePageFromHash(item.hash));
-                    }}
+                    onClick={() => handleSidebarLinkClick(item.hash)}
                   >
                     {item.label}
                   </a>
@@ -622,10 +625,7 @@ export default function App() {
                     key={item.hash}
                     className={currentHash === item.hash ? "active" : ""}
                     href={item.hash}
-                    onClick={() => {
-                      setCurrentHash(item.hash);
-                      setPage(resolvePageFromHash(item.hash));
-                    }}
+                    onClick={() => handleSidebarLinkClick(item.hash)}
                   >
                     {item.label}
                   </a>
