@@ -4,6 +4,7 @@ import DomainForecast from "./pages/DomainForecast.jsx";
 import ManageForecast from "./pages/ManageForecast.jsx";
 import ForecastEvents from "./pages/ForecastEvents.jsx";
 import DashboardCards from "./pages/DashboardCards.jsx";
+import CustomerServiceTranscripts from "./pages/CustomerServiceTranscripts.jsx";
 import LoginPage from "./pages/Login.jsx";
 import { useAuth } from "./auth/AuthContext.jsx";
 
@@ -17,8 +18,8 @@ function resolvePageFromHash(hash) {
     return "home";
   }
 
-  if (hash === "#admin") {
-    return "admin";
+  if (hash === "#admin" || hash === "#sales-forecast-admin") {
+    return "sales-forecast-admin";
   }
 
   if (hash === "#parts-dashboard") {
@@ -91,6 +92,10 @@ function resolvePageFromHash(hash) {
 
   if (hash === "#dashboard-cards") {
     return "dashboard-cards";
+  }
+
+  if (hash === "#customer-service") {
+    return "customer-service";
   }
 
   return "home";
@@ -169,7 +174,7 @@ function HomePage({ user }) {
     <section className="home-workspace">
       <header className="home-workspace-header">
         <div>
-          <p className="eyebrow">Prism Workspace</p>
+          <p className="eyebrow">PRISM Workspace</p>
           <h1>Welcome, {user.name}</h1>
           <p>
             {hasPermissions
@@ -192,7 +197,7 @@ function HomePage({ user }) {
         <article className="metric">
           <span>Assigned permissions</span>
           <strong>{user.permissions?.length || 0}</strong>
-          <p>Menu items appear automatically when permissions and access scopes are assigned.</p>
+          <p>Menu items appear automatically when permissions and data access are assigned.</p>
         </article>
         <article className="metric">
           <span>Workspace status</span>
@@ -206,14 +211,14 @@ function HomePage({ user }) {
           <p className="eyebrow">Next steps</p>
           <h2>{hasPermissions ? "Use the available navigation for assigned work." : "Ask an administrator to assign access."}</h2>
           <p>
-            Forecast dashboards and administrative controls are available only when your role has the required permissions and data scope.
+            Forecast dashboards and administrative controls are available only when your role has the required permissions and data access.
           </p>
         </article>
         <article className="home-panel">
           <p className="eyebrow">Access</p>
           <h2>Need additional permissions?</h2>
           <p>
-            Ask your manager or Prism administrator to review your role, permissions, and access scopes.
+            Ask your manager or PRISM administrator to review your role, permissions, and data access.
           </p>
         </article>
       </section>
@@ -232,6 +237,7 @@ export default function App() {
   const canViewServiceForecast = user?.permissions?.includes("View Service Forecast");
   const canViewWarrantyForecast = user?.permissions?.includes("View Warranty Forecast");
   const canViewSlaForecast = user?.permissions?.includes("View SLA Forecast");
+  const canViewCustomerServiceTranscripts = user?.permissions?.includes("View Customer Service Transcripts");
   const canManageForecast = user?.permissions?.includes("Manage Forecast");
   const canManagePartsForecast = user?.permissions?.includes("Manage Parts Forecast");
   const canManageServiceForecast = user?.permissions?.includes("Manage Service Forecast");
@@ -247,11 +253,13 @@ export default function App() {
   const hasServiceScope = hasDomainScope(user, "Service");
   const hasWarrantyScope = hasDomainScope(user, "Warranty");
   const hasSlaScope = hasDomainScope(user, "SLA");
+  const hasCustomerServiceScope = hasDomainScope(user, "Customer Service") || hasDomainScope(user, "Service");
   const canAccessSalesDashboard = Boolean(canViewForecast && hasSalesScope);
   const canAccessPartsDashboard = Boolean(canViewPartsForecast && hasPartsScope);
   const canAccessServiceDashboard = Boolean(canViewServiceForecast && hasServiceScope);
   const canAccessWarrantyDashboard = Boolean(canViewWarrantyForecast && hasWarrantyScope);
   const canAccessSlaDashboard = Boolean(canViewSlaForecast && hasSlaScope);
+  const canAccessCustomerService = Boolean(canViewCustomerServiceTranscripts && (hasCustomerServiceScope || user?.role === "Admin" || user?.role === "National Head"));
   const usesForecastHome = Boolean(user && canAccessSalesDashboard);
   const visibleForecastNavItems = useMemo(
     () =>
@@ -281,6 +289,8 @@ export default function App() {
     ? "parts-dashboard"
     : isServiceManager && canAccessServiceDashboard
       ? "service-dashboard"
+      : isServiceManager && canAccessCustomerService
+        ? "customer-service"
       : canUseForecastDashboard
         ? "home"
         : canAccessServiceDashboard
@@ -291,7 +301,9 @@ export default function App() {
               ? "parts-dashboard"
               : canAccessWarrantyDashboard
                 ? "warranty-dashboard"
-                : "home";
+                : canAccessCustomerService
+                  ? "customer-service"
+                  : "home";
 
   useEffect(() => {
     function handleHashChange() {
@@ -344,7 +356,7 @@ export default function App() {
 
   function navigate(nextPage) {
     const hashByPage = {
-      admin: "admin",
+      "sales-forecast-admin": "sales-forecast-admin",
       "parts-dashboard": "parts-dashboard",
       "service-dashboard": "service-dashboard",
       "warranty-dashboard": "warranty-dashboard",
@@ -355,6 +367,7 @@ export default function App() {
       "sla-forecast-admin": "sla-forecast-admin",
       "forecast-events": "forecast-events",
       "dashboard-cards": "dashboard-cards",
+      "customer-service": "customer-service",
       home: "home"
     };
 
@@ -383,7 +396,12 @@ export default function App() {
       return;
     }
 
-    if (page === "admin" && !canManageForecast) {
+    if (currentHash === "#admin" && canManageForecast) {
+      window.location.hash = "#sales-forecast-admin";
+      return;
+    }
+
+    if (page === "sales-forecast-admin" && !canManageForecast) {
       navigate(fallbackPage);
       return;
     }
@@ -438,6 +456,11 @@ export default function App() {
       return;
     }
 
+    if (page === "customer-service" && !canAccessCustomerService) {
+      navigate(fallbackPage);
+      return;
+    }
+
     if (page === "home" && usesForecastHome) {
       const currentForecastItem = forecastNavDefinitions.find((item) => item.hash === currentHash);
       const currentForecastItemVisible = visibleForecastNavItems.some((item) => item.hash === currentHash);
@@ -480,14 +503,35 @@ export default function App() {
         window.location.hash = visibleSlaNavItems[0]?.hash || "#home";
       }
     }
-  }, [canAccessPartsDashboard, canAccessServiceDashboard, canAccessWarrantyDashboard, canAccessSlaDashboard, canManageAnyForecast, canManageForecast, canManagePartsForecast, canManageServiceForecast, canManageWarrantyForecast, canManageSlaForecast, currentHash, fallbackPage, hasAnyPermission, isAdmin, isAuthenticated, page, user, usesForecastHome, visibleForecastNavItems, visiblePartsNavItems, visibleServiceNavItems, visibleWarrantyNavItems, visibleSlaNavItems]);
+  }, [canAccessCustomerService, canAccessPartsDashboard, canAccessServiceDashboard, canAccessWarrantyDashboard, canAccessSlaDashboard, canManageAnyForecast, canManageForecast, canManagePartsForecast, canManageServiceForecast, canManageWarrantyForecast, canManageSlaForecast, currentHash, fallbackPage, hasAnyPermission, isAdmin, isAuthenticated, page, user, usesForecastHome, visibleForecastNavItems, visiblePartsNavItems, visibleServiceNavItems, visibleWarrantyNavItems, visibleSlaNavItems]);
 
   if (booting) {
     return (
       <main className="auth-shell">
-        <section className="login-card login-card-boot">
-          <p className="eyebrow">Prism Access</p>
-          <h1>Restoring your secure session.</h1>
+        <section className="login-card login-card-boot" aria-busy="true">
+          <div className="login-copy">
+            <img
+              className="login-logo"
+              src="/resources/images/prism-sales-forecasting-logo.png"
+              alt="PRISM Forecasting & Service Intelligence"
+            />
+            <p className="eyebrow">Secure Planning Workspace</p>
+            <h1>Restoring session</h1>
+            <p>
+              Access the forecasting and service intelligence workspace to review sales, aftersales, diagnostics, events, transcripts, and administration tools.
+            </p>
+          </div>
+
+          <div className="login-form login-restore-panel">
+            <div className="login-form-heading">
+              <p className="eyebrow">PRISM Access</p>
+              <h2>Checking your secure session</h2>
+            </div>
+            <div className="session-restore-loader" aria-hidden="true">
+              <span />
+            </div>
+            <p className="muted-copy">Please wait while PRISM verifies your sign-in.</p>
+          </div>
         </section>
       </main>
     );
@@ -502,8 +546,9 @@ export default function App() {
   const serviceNavItems = visibleServiceNavItems;
   const warrantyNavItems = visibleWarrantyNavItems;
   const slaNavItems = visibleSlaNavItems;
+  const customerServiceNavItems = canAccessCustomerService ? [{ hash: "#customer-service", label: "Transcripts" }] : [];
   const manageNavItems = [
-    ...(canManageForecast ? [{ hash: "#admin", label: "Sales Forecast" }] : []),
+    ...(canManageForecast ? [{ hash: "#sales-forecast-admin", label: "Sales Forecast" }] : []),
     ...(canManagePartsForecast ? [{ hash: "#parts-forecast-admin", label: "Parts Forecast" }] : []),
     ...(canManageServiceForecast ? [{ hash: "#service-forecast-admin", label: "Service Forecast" }] : []),
     ...(canManageWarrantyForecast ? [{ hash: "#warranty-forecast-admin", label: "Warranty Forecast" }] : []),
@@ -517,7 +562,7 @@ export default function App() {
         <div className="app-sidebar-brand">
           <img
             src="/resources/images/prism-sales-forecasting-logo.png"
-            alt="PRISM Sales Forecasting"
+            alt="PRISM Forecasting & Service Intelligence"
           />
           <button
             type="button"
@@ -617,6 +662,22 @@ export default function App() {
               </>
             )}
 
+            {/* {customerServiceNavItems.length > 0 && (
+              <>
+                <p>Customer Service</p>
+                {customerServiceNavItems.map((item) => (
+                  <a
+                    key={item.hash}
+                    className={currentHash === item.hash ? "active" : ""}
+                    href={item.hash}
+                    onClick={() => handleSidebarLinkClick(item.hash)}
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </>
+            )} */}
+
             {manageNavItems.length > 0 && (
               <>
                 <p>Manage</p>
@@ -662,7 +723,7 @@ export default function App() {
           <DomainForecast key="warranty-dashboard" domain="warranty" />
         ) : page === "sla-dashboard" && canAccessSlaDashboard ? (
           <DomainForecast key="sla-dashboard" domain="sla" />
-        ) : page === "admin" && canManageForecast ? (
+        ) : page === "sales-forecast-admin" && canManageForecast ? (
           <ManageForecast />
         ) : page === "parts-forecast-admin" && canManagePartsForecast ? (
           <ManageForecast
@@ -704,6 +765,8 @@ export default function App() {
           <ForecastEvents />
         ) : page === "dashboard-cards" && isAdmin ? (
           <DashboardCards />
+        ) : page === "customer-service" && canAccessCustomerService ? (
+          <CustomerServiceTranscripts />
         ) : (
           <HomePage user={user} />
         )}

@@ -63,9 +63,21 @@ function formatPercent(value) {
 }
 
 function getBandLabel(intervalMode) {
-  if (intervalMode === "80") return "80% band";
-  if (intervalMode === "95") return "95% band";
-  return "Point forecast only";
+  if (intervalMode === "80") return "80% Band";
+  if (intervalMode === "95") return "95% Band";
+  return "Point Forecast Only";
+}
+
+function getPointTitle(label, point, intervalMode, unitLabel) {
+  if (intervalMode === "80") {
+    return `${label}: ${formatUnits(point.unitsSold)} forecast | 80% band ${formatUnits(point.lower_80)}-${formatUnits(point.upper_80)} ${unitLabel.toLowerCase()}`;
+  }
+
+  if (intervalMode === "95") {
+    return `${label}: ${formatUnits(point.unitsSold)} forecast | 95% band ${formatUnits(point.lower_95)}-${formatUnits(point.upper_95)} ${unitLabel.toLowerCase()}`;
+  }
+
+  return `${label}: ${formatUnits(point.unitsSold)} ${unitLabel.toLowerCase()}`;
 }
 
 function getSeriesColor(index, total = 1, alpha = 1) {
@@ -272,7 +284,7 @@ function ForecastChart({ series, hoveredGroupId, onHoverGroup, intervalMode, uni
   return (
     <div className="chart-wrap" aria-label={`${unitLabel} forecast by month`}>
       <svg viewBox={`0 0 ${width} ${height}`} role="img">
-        <title>{unitLabel} forecast by month</title>
+        <title>{`${unitLabel} forecast by month - ${getBandLabel(intervalMode)}`}</title>
         {[0, 0.25, 0.5, 0.75, 1].map((step) => {
           const value = minValue + range * step;
           return (
@@ -314,13 +326,25 @@ function ForecastChart({ series, hoveredGroupId, onHoverGroup, intervalMode, uni
               </path>
               {item.forecast.map((point, pointIndex) => (
                 <circle key={`${seriesId}-${point.month}`} cx={xFor(pointIndex)} cy={yFor(point.unitsSold)} r={isHovered ? 3 : 2} fill={color} opacity={seriesOpacity}>
-                  <title>{`${label}: ${formatUnits(point.unitsSold)} ${unitLabel.toLowerCase()}`}</title>
+                  <title>{getPointTitle(label, point, intervalMode, unitLabel)}</title>
                 </circle>
               ))}
             </g>
           );
         })}
       </svg>
+      <div className="chart-legend interval-legend">
+        <span>
+          <i className="legend-line forecast-line" />
+          Forecast
+        </span>
+        {intervalMode !== "point" && (
+          <span>
+            <i className={`interval-swatch ${intervalMode === "95" ? "interval-95" : "interval-80"}`} />
+            {getBandLabel(intervalMode)}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -643,12 +667,21 @@ function Leaderboard({ rows, unitLabel }) {
   );
 }
 
-function KpiMetric({ label, value, detail }) {
+function KpiMetric({ label, value, detail, isLoading = false }) {
   return (
-    <article className="kpi-card">
+    <article className={`kpi-card${isLoading ? " is-loading" : ""}`} aria-busy={isLoading}>
       <span>{label}</span>
-      <strong>{value}</strong>
-      <p>{detail}</p>
+      {isLoading ? (
+        <>
+          <strong className="kpi-skeleton kpi-skeleton-value" aria-label="Loading metric value" />
+          <p className="kpi-skeleton kpi-skeleton-detail" aria-hidden="true" />
+        </>
+      ) : (
+        <>
+          <strong>{value}</strong>
+          <p>{detail}</p>
+        </>
+      )}
     </article>
   );
 }
@@ -1165,29 +1198,33 @@ export default function DomainForecastPage({ domain }) {
               {isParts && cards.fillRate && (
                 <KpiMetric
                   label="Fill Rate"
-                  value={kpiState.loading ? "Loading" : formatPercent(kpiState.kpis.fillRate?.value)}
+                  value={formatPercent(kpiState.kpis.fillRate?.value)}
                   detail={`${formatUnits(kpiState.kpis.fillRate?.numerator)} fulfilled of ${formatUnits(kpiState.kpis.fillRate?.denominator)} demanded`}
+                  isLoading={kpiState.loading}
                 />
               )}
               {!isParts && !isWarranty && cards.mttr && (
                 <KpiMetric
                   label="MTTR"
-                  value={kpiState.loading ? "Loading" : `${formatDecimal(kpiState.kpis.mttr?.value)} days`}
+                  value={`${formatDecimal(kpiState.kpis.mttr?.value)} days`}
                   detail={`${formatUnits(kpiState.kpis.mttr?.sampleCount)} completed orders in the KPI window`}
+                  isLoading={kpiState.loading}
                 />
               )}
               {isWarranty && cards.returnRate && (
                 <KpiMetric
                   label="Return Rate"
-                  value={kpiState.loading ? "Loading" : formatPercent(kpiState.kpis.returnRate?.value)}
+                  value={formatPercent(kpiState.kpis.returnRate?.value)}
                   detail={`${formatUnits(kpiState.kpis.returnRate?.numerator)} returns of ${formatUnits(kpiState.kpis.returnRate?.denominator)} claim and return records`}
+                  isLoading={kpiState.loading}
                 />
               )}
               {cards.serviceCostActualVsForecast && (
                 <KpiMetric
                   label="Service Cost Actuals vs Forecast"
-                  value={kpiState.loading ? "Loading" : formatCurrency(costKpi.actual)}
-                  detail={kpiState.loading ? "Loading cost baseline" : costVarianceLabel}
+                  value={formatCurrency(costKpi.actual)}
+                  detail={costVarianceLabel}
+                  isLoading={kpiState.loading}
                 />
               )}
             </section>

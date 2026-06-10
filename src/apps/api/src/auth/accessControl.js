@@ -10,10 +10,13 @@ export const permissions = {
   viewWarrantyForecast: "View Warranty Forecast",
   manageWarrantyForecast: "Manage Warranty Forecast",
   viewSlaForecast: "View SLA Forecast",
-  manageSlaForecast: "Manage SLA Forecast"
+  manageSlaForecast: "Manage SLA Forecast",
+  viewCustomerServiceTranscripts: "View Customer Service Transcripts",
+  manageCustomerServiceTranscripts: "Manage Customer Service Transcripts",
+  analyzeCustomerServiceTranscripts: "Analyze Customer Service Transcripts"
 };
 
-const domains = ["Sales", "Parts", "Service", "Warranty", "SLA"];
+const domains = ["Sales", "Parts", "Service", "Warranty", "SLA", "Customer Service"];
 
 export function normalizeAccessDomain(domain = "Sales") {
   const normalized = String(domain || "").trim().toLowerCase();
@@ -21,6 +24,7 @@ export function normalizeAccessDomain(domain = "Sales") {
   if (normalized === "service") return "Service";
   if (normalized === "warranty") return "Warranty";
   if (normalized === "sla") return "SLA";
+  if (normalized === "customer_service" || normalized === "customer service") return "Customer Service";
   return "Sales";
 }
 
@@ -106,7 +110,8 @@ export function buildUserProfile(user) {
       firstValueForType(scopesForDomain(profile, "Parts"), "Service Center") ||
       firstValueForType(scopesForDomain(profile, "Service"), "Service Center") ||
       firstValueForType(scopesForDomain(profile, "Warranty"), "Service Center") ||
-      firstValueForType(scopesForDomain(profile, "SLA"), "Service Center"),
+      firstValueForType(scopesForDomain(profile, "SLA"), "Service Center") ||
+      firstValueForType(scopesForDomain(profile, "Customer Service"), "Service Center"),
     forecastLevels: inferForecastLevels(profile)
   };
 }
@@ -255,5 +260,10 @@ export function domainForPermission(permission) {
   if (permission === permissions.viewServiceForecast || permission === permissions.manageServiceForecast) return "Service";
   if (permission === permissions.viewWarrantyForecast || permission === permissions.manageWarrantyForecast) return "Warranty";
   if (permission === permissions.viewSlaForecast || permission === permissions.manageSlaForecast) return "SLA";
+  if (
+    permission === permissions.viewCustomerServiceTranscripts ||
+    permission === permissions.manageCustomerServiceTranscripts ||
+    permission === permissions.analyzeCustomerServiceTranscripts
+  ) return "Customer Service";
   return domains[0];
 }

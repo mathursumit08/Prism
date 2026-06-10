@@ -1,7 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const apiUrl = import.meta.env.VITE_API_URL;
 const AuthContext = createContext(null);
+
+if (!apiUrl) {
+  throw new Error("Missing required VITE_API_URL environment variable.");
+}
 
 function buildHeaders(existingHeaders, accessToken) {
   const headers = new Headers(existingHeaders || {});
@@ -40,7 +44,7 @@ export function AuthProvider({ children }) {
     }
 
     refreshPromiseRef.current = (async () => {
-      const response = await fetch(`${apiUrl}/api/auth/refresh`, {
+      const response = await fetch(`${apiUrl}/api/v1/auth/refresh`, {
         method: "POST",
         credentials: "include"
       });
@@ -84,7 +88,7 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(
     async ({ username, password }) => {
-      const response = await fetch(`${apiUrl}/api/auth/login`, {
+      const response = await fetch(`${apiUrl}/api/v1/auth/login`, {
         method: "POST",
         credentials: "include",
         headers: {
@@ -109,7 +113,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     try {
-      await fetch(`${apiUrl}/api/auth/logout`, {
+      await fetch(`${apiUrl}/api/v1/auth/logout`, {
         method: "POST",
         credentials: "include"
       });

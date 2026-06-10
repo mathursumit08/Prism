@@ -10,7 +10,7 @@ const refreshCookieSecure =
     : process.env.AUTH_COOKIE_SECURE === "true";
 const refreshCookieSameSite = process.env.AUTH_COOKIE_SAME_SITE || "lax";
 const refreshCookieDomain = process.env.AUTH_COOKIE_DOMAIN || undefined;
-const refreshCookiePath = process.env.AUTH_COOKIE_PATH || "/api/auth";
+const refreshCookiePath = process.env.AUTH_COOKIE_PATH || "/api/v1/auth";
 
 export function signAccessToken(username) {
   return signJwt({ sub: username, type: "access" }, accessSecret, accessTokenTtlSeconds);

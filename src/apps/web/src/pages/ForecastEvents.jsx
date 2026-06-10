@@ -92,13 +92,16 @@ export default function ForecastEventsPage() {
   const sortedEvents = useMemo(() => eventsState.events, [eventsState.events]);
 
   useEffect(() => {
-    loadEvents();
-  }, []);
-
-  useEffect(() => {
     if (allowedDomains.length === 0) {
+      setEventsState({
+        loading: false,
+        error: "",
+        events: []
+      });
       return;
     }
+
+    loadEvents();
 
     setForm((current) => {
       if (allowedDomains.includes(current.forecastDomain)) {
@@ -263,12 +266,16 @@ export default function ForecastEventsPage() {
           <p className="eyebrow">Forecast Events</p>
           <h1>Maintain demand-impacting events.</h1>
           <p className="admin-header-copy">
-            Configure dated uplift rules for Sales, Parts, and Service forecasts by National, Zone, State, or Service Center scope.
+            Configure dated impact rules across Sales, Parts, Service, Warranty, and SLA forecasts by National, Zone, State, or Service Center scope.
           </p>
         </div>
         <div className="admin-hero-card">
           <span className="status-badge healthy">Calendar</span>
-          <strong>{eventsState.loading ? "Loading" : `${sortedEvents.length} events`}</strong>
+          {eventsState.loading ? (
+            <strong className="kpi-skeleton kpi-skeleton-value" aria-label="Loading event count" />
+          ) : (
+            <strong>{`${sortedEvents.length} events`}</strong>
+          )}
           <p>Changes affect forecasts after regeneration or the next scheduled worker run.</p>
         </div>
       </section>
@@ -289,6 +296,22 @@ export default function ForecastEventsPage() {
         </DismissibleMessage>
       )}
 
+      {allowedDomains.length === 0 ? (
+        <section className="forecast-event-layout forecast-event-access-state">
+          <article className="forecast-event-form">
+            <div className="panel-heading compact">
+              <div>
+                <p className="eyebrow">Access Required</p>
+                <h2>No manageable forecast domains</h2>
+              </div>
+            </div>
+            <p className="muted-copy">
+              Your account can view this workspace, but it does not currently have permission to manage forecast events.
+              Ask an administrator to assign a manage-forecast permission for the required domain.
+            </p>
+          </article>
+        </section>
+      ) : (
       <section className="forecast-event-layout">
         <form className="forecast-event-form" onSubmit={handleSubmit}>
           <div className="panel-heading compact">
@@ -318,7 +341,7 @@ export default function ForecastEventsPage() {
               <input
                 value={form.eventCode}
                 onChange={(event) => updateField("eventCode", event.target.value)}
-                placeholder="DIWALI_2026"
+                placeholder="Seasonal campaign"
                 required
               />
             </label>
@@ -489,6 +512,7 @@ export default function ForecastEventsPage() {
           </div>
         </section>
       </section>
+      )}
     </>
   );
 }

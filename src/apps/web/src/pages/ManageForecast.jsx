@@ -9,7 +9,7 @@ function formatUnits(value) {
 
 function formatPercent(value) {
   if (value === null || value === undefined) {
-    return "Not available";
+    return "N/A";
   }
 
   return `${Number(value).toFixed(1)}%`;
@@ -17,7 +17,7 @@ function formatPercent(value) {
 
 function formatDateTime(value) {
   if (!value) {
-    return "Not available";
+    return "N/A";
   }
 
   return new Intl.DateTimeFormat("en-IN", {
@@ -43,14 +43,14 @@ function formatDuration(start, end) {
   // PostgreSQL timestamps can include sub-millisecond precision, so duration
   // math uses nanoseconds instead of relying only on Date milliseconds.
   if (!start || !end) {
-    return "Not available";
+    return "N/A";
   }
 
   const startNs = parseTimestampToNanoseconds(start);
   const endNs = parseTimestampToNanoseconds(end);
 
   if (startNs === null || endNs === null || endNs < startNs) {
-    return "Not available";
+    return "N/A";
   }
 
   const totalNanoseconds = endNs - startNs;
@@ -192,8 +192,8 @@ function CalibrationCoverageChart({ runs }) {
 
 export default function ManageForecastPage({
   domain = "sales",
-  title = "Manage the forecast pipeline without leaving Prism.",
-  eyebrow = "Forecast Administration",
+  title = "Manage sales forecasting.",
+  eyebrow = "Sales Forecast Administration",
   description = "Review run health, clear future output, and launch a new forecast regeneration with live progress.",
   regenerateLabel = "Regenerate forecast",
   clearLabel = "Clear future forecast rows"
@@ -476,7 +476,7 @@ export default function ManageForecastPage({
     { key: "finished", label: "Finished successfully" }
   ];
   const activeStageIndex = progressStages.findIndex((stage) => stage.key === generation?.stage);
-  const latestRunDuration = latestRun ? formatDuration(latestRun.startedAt, latestRun.completedAt) : "Not available";
+  const latestRunDuration = latestRun ? formatDuration(latestRun.startedAt, latestRun.completedAt) : "N/A";
 
   return (
     <>
@@ -557,7 +557,7 @@ export default function ManageForecastPage({
       <section className="summary-grid admin-summary-grid" aria-label="Forecast admin summary">
         <article className="metric">
           <span>Last successful run</span>
-          <strong>{lastSuccessfulRun ? formatDateTime(lastSuccessfulRun.completedAt) : "Not available"}</strong>
+          <strong>{lastSuccessfulRun ? formatDateTime(lastSuccessfulRun.completedAt) : "N/A"}</strong>
           <p>
             {lastSuccessfulRun
               ? `${lastSuccessfulRun.horizonMonths}-month horizon`
@@ -641,7 +641,7 @@ export default function ManageForecastPage({
             </div>
             <div>
               <span>Latest run status</span>
-              <strong>{latestRun?.status || "Not available"}</strong>
+              <strong>{latestRun?.status || "N/A"}</strong>
             </div>
             <div>
               <span>Last failed run</span>
@@ -693,7 +693,7 @@ export default function ManageForecastPage({
                           .slice(0, 6)
                           .map((item) => `M${item.horizonMonth}: ${formatUnits(item.width80)}/${formatUnits(item.width95)}`)
                           .join(" | ")
-                      : "Not available"}
+                      : "N/A"}
                   </strong>
                 </div>
               </div>
@@ -702,7 +702,7 @@ export default function ManageForecastPage({
             <p className="notice compact-notice">
               {isSalesForecast
                 ? "Calibration metrics will appear after the next completed forecast run."
-                : "Parts and service forecast runs store health and output counts; interval calibration will be added after domain-specific backtesting is enabled."}
+                : "Domain forecast runs store health and output counts; interval calibration will be added after domain-specific backtesting is enabled."}
             </p>
           )}
         </article>
