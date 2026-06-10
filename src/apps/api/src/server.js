@@ -5,6 +5,7 @@ import { pool } from "./db.js";
 import referenceRoutes from "./routes/referenceRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import v1ForecastRoutes from "./routes/v1/forecastRoutes.js";
+import v1CustomerServiceRoutes from "./routes/v1/customerServiceRoutes.js";
 import { buildOpenApiSpec, buildSwaggerHtml } from "./openapi.js";
 
 dotenv.config();
@@ -73,6 +74,14 @@ app.get("/api/health", (_request, response) => {
   });
 });
 
+app.get("/api/v1/health", (_request, response) => {
+  response.json({
+    ok: true,
+    message: "API is running",
+    port
+  });
+});
+
 app.get("/api/db-check", async (_request, response) => {
   try {
     const result = await pool.query("SELECT NOW() AS server_time");
@@ -90,8 +99,27 @@ app.get("/api/db-check", async (_request, response) => {
   }
 });
 
-app.use("/api/auth", authRoutes);
+app.get("/api/v1/db-check", async (_request, response) => {
+  try {
+    const result = await pool.query("SELECT NOW() AS server_time");
+    response.json({
+      ok: true,
+      database: "connected",
+      serverTime: result.rows[0].server_time
+    });
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      database: "disconnected",
+      error: error.message
+    });
+  }
+});
+
+app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/forecasts", v1ForecastRoutes);
+app.use("/api/v1/customer-service", v1CustomerServiceRoutes);
+app.use("/api/v1", referenceRoutes);
 app.use("/api", referenceRoutes);
 
 app.listen(port, () => {

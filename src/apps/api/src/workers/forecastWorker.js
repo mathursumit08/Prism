@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool } from "../db.js";
 import { buildBaselineForecast } from "../forecasting/baselineForecast.js";
@@ -29,7 +30,9 @@ const domainWorkerLockIds = {
   [WARRANTY_DOMAIN]: 46013523,
   [SLA_DOMAIN]: 46013524
 };
-const currentFile = fileURLToPath(import.meta.url);
+const currentFile = path.resolve(fileURLToPath(import.meta.url));
+const invokedFile = process.argv[1] ? path.resolve(process.argv[1]) : "";
+const isDirectWorkerExecution = invokedFile.toLowerCase() === currentFile.toLowerCase();
 
 function domainDataKey(domain) {
   return String(domain || "").toLowerCase();
@@ -1415,7 +1418,7 @@ function scheduleNextRun() {
   }, delay);
 }
 
-if (process.argv[1] === currentFile) {
+if (isDirectWorkerExecution) {
   const runOnce = process.argv.includes("--once");
   const domainArgument = process.argv.find((argument) => argument.startsWith("--domain="));
   const requestedDomain = domainArgument?.split("=")[1] ?? "all";
@@ -1430,6 +1433,7 @@ if (process.argv[1] === currentFile) {
   const runner = runnerByDomain[requestedDomain] ?? runAllForecastWorkers;
 
   if (runOnce) {
+    console.log(`Forecast worker starting one-time run for ${requestedDomain}.`);
     runner()
       .then(async () => {
         await pool.end();
@@ -1439,6 +1443,7 @@ if (process.argv[1] === currentFile) {
         process.exit(1);
       });
   } else {
+    console.log("Forecast worker started in scheduled mode.");
     scheduleNextRun();
   }
 }

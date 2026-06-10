@@ -545,6 +545,214 @@ const forecastEventRequestSchema = {
   }
 };
 
+const salesKpiResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    filters: { type: "object" },
+    window: { type: "object" },
+    kpis: { type: "object" }
+  }
+};
+
+const dealerReferenceResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    dealers: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          region: { type: "string" },
+          city: { type: "string" },
+          state: { type: "string" },
+          dealerType: { type: "string" },
+          salesCapacityPerMonth: { type: "number" }
+        }
+      }
+    }
+  }
+};
+
+const modelReferenceResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    models: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          manufacturer: { type: "string" },
+          segment: { type: "string" },
+          launchYear: { type: "number" },
+          isActive: { type: "boolean" },
+          isDiscontinued: { type: "boolean" }
+        }
+      }
+    }
+  }
+};
+
+const variantReferenceResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    variants: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          modelId: { type: "string" },
+          name: { type: "string" },
+          fuelType: { type: "string" },
+          transmission: { type: "string" },
+          exShowroomPrice: { type: "number" },
+          isActive: { type: "boolean" },
+          isDiscontinued: { type: "boolean" }
+        }
+      }
+    }
+  }
+};
+
+const customerServiceTranscriptSchema = {
+  type: "object",
+  properties: {
+    transcriptId: { type: "integer" },
+    transcriptReference: { type: "string" },
+    ownershipDomain: { enum: ["Sales", "Parts", "Service", "Warranty", "SLA", "Customer Service", "General"], type: "string" },
+    sourceType: { enum: ["Text", "Audio"], type: "string" },
+    sourceReferenceId: { nullable: true, type: "string" },
+    customerId: { nullable: true, type: "string" },
+    customerName: { nullable: true, type: "string" },
+    customerPhone: { nullable: true, type: "string" },
+    dealerId: { nullable: true, type: "string" },
+    serviceCenterId: { nullable: true, type: "string" },
+    serviceOrderId: { nullable: true, type: "string" },
+    modelId: { nullable: true, type: "string" },
+    variantId: { nullable: true, type: "string" },
+    channel: { enum: ["Phone", "WhatsApp", "Email", "Chat", "Walk-in", "Other"], type: "string" },
+    transcriptText: { type: "string" },
+    languageCode: { type: "string" },
+    transcriptDate: { format: "date-time", type: "string" },
+    audioFileName: { nullable: true, type: "string" },
+    audioStorageUri: { nullable: true, type: "string" },
+    audioMimeType: { nullable: true, type: "string" },
+    audioDurationSeconds: { nullable: true, type: "integer" },
+    speechToTextStatus: { enum: ["not_required", "pending", "processing", "completed", "failed"], type: "string" },
+    uploadedBy: { nullable: true, type: "string" },
+    analysisStatus: { nullable: true, type: "string" },
+    sentiment: { nullable: true, type: "string" },
+    severity: { nullable: true, type: "string" },
+    escalationRisk: { nullable: true, type: "string" },
+    slaBreachRisk: { nullable: true, type: "string" },
+    createdAt: { format: "date-time", type: "string" },
+    updatedAt: { format: "date-time", type: "string" }
+  }
+};
+
+const customerServiceTranscriptCreateSchema = {
+  type: "object",
+  required: ["transcriptText"],
+  properties: {
+    ownershipDomain: { default: "Customer Service", enum: ["Sales", "Parts", "Service", "Warranty", "SLA", "Customer Service", "General"], type: "string" },
+    sourceType: { default: "Text", enum: ["Text", "Audio"], type: "string" },
+    sourceReferenceId: { type: "string" },
+    customerId: { type: "string" },
+    customerName: { type: "string" },
+    customerPhone: { type: "string" },
+    dealerId: { type: "string" },
+    serviceCenterId: { type: "string" },
+    serviceOrderId: { type: "string" },
+    modelId: { type: "string" },
+    variantId: { type: "string" },
+    channel: { default: "Phone", enum: ["Phone", "WhatsApp", "Email", "Chat", "Walk-in", "Other"], type: "string" },
+    transcriptText: { type: "string" },
+    languageCode: { default: "en-IN", type: "string" },
+    transcriptDate: { format: "date-time", type: "string" },
+    audioFileName: { type: "string" },
+    audioStorageUri: { type: "string" },
+    audioMimeType: { type: "string" },
+    audioDurationSeconds: { type: "integer" },
+    analyze: { default: true, type: "boolean" }
+  }
+};
+
+const customerServiceAnalysisSchema = {
+  type: "object",
+  properties: {
+    analysisId: { type: "integer" },
+    transcriptId: { type: "integer" },
+    status: { enum: ["pending", "processing", "completed", "failed"], type: "string" },
+    modelProvider: { nullable: true, type: "string" },
+    modelName: { nullable: true, type: "string" },
+    sentiment: { nullable: true, enum: ["positive", "neutral", "negative", "mixed"], type: "string" },
+    sentimentScore: { nullable: true, type: "number" },
+    primaryIntent: { nullable: true, type: "string" },
+    issueCategory: { nullable: true, type: "string" },
+    severity: { nullable: true, enum: ["low", "medium", "high", "critical"], type: "string" },
+    resolutionStatus: { nullable: true, enum: ["resolved", "unresolved", "pending", "unknown"], type: "string" },
+    escalationRisk: { nullable: true, enum: ["low", "medium", "high"], type: "string" },
+    slaBreachRisk: { nullable: true, enum: ["low", "medium", "high"], type: "string" },
+    customerEffortScore: { nullable: true, type: "number" },
+    summary: { nullable: true, type: "string" },
+    recommendedAction: { nullable: true, type: "string" },
+    followUpRequired: { type: "boolean" },
+    followUpDueDate: { nullable: true, format: "date", type: "string" },
+    confidenceScore: { nullable: true, type: "number" }
+  }
+};
+
+const customerServiceJobSchema = {
+  type: "object",
+  properties: {
+    jobId: { type: "integer" },
+    transcriptId: { type: "integer" },
+    status: { enum: ["queued", "processing", "completed", "failed"], type: "string" },
+    attemptCount: { type: "integer" },
+    maxAttempts: { type: "integer" },
+    lockedBy: { nullable: true, type: "string" },
+    errorMessage: { nullable: true, type: "string" },
+    createdAt: { format: "date-time", type: "string" },
+    startedAt: { nullable: true, format: "date-time", type: "string" },
+    completedAt: { nullable: true, format: "date-time", type: "string" }
+  }
+};
+
+const customerServiceAuditSchema = {
+  type: "object",
+  properties: {
+    auditId: { type: "integer" },
+    transcriptId: { nullable: true, type: "integer" },
+    actorUsername: { nullable: true, type: "string" },
+    action: { type: "string" },
+    details: { type: "object" },
+    createdAt: { format: "date-time", type: "string" }
+  }
+};
+
+const customerServiceListParameters = [
+  { in: "query", name: "ownershipDomain", schema: { type: "string" } },
+  { in: "query", name: "dealerId", schema: { type: "string" } },
+  { in: "query", name: "serviceCenterId", schema: { type: "string" } },
+  { in: "query", name: "channel", schema: { type: "string" } },
+  { in: "query", name: "status", schema: { type: "string" } },
+  { in: "query", name: "severity", schema: { type: "string" } },
+  { in: "query", name: "escalationRisk", schema: { type: "string" } },
+  { in: "query", name: "fromDate", schema: { format: "date", type: "string" } },
+  { in: "query", name: "toDate", schema: { format: "date", type: "string" } },
+  { in: "query", name: "search", schema: { type: "string" } },
+  { in: "query", name: "page", schema: { default: 1, type: "integer" } },
+  { in: "query", name: "pageSize", schema: { default: 50, maximum: 200, type: "integer" } }
+];
+
 function buildForecastPath(summary, description) {
   return {
     get: {
@@ -683,7 +891,7 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
       description: "Versioned forecast endpoints for frontend integration."
     },
     servers: [{ url: baseUrl }],
-    tags: [{ name: "Auth" }, { name: "Forecasts" }],
+    tags: [{ name: "Auth" }, { name: "Forecasts" }, { name: "Customer Service" }, { name: "References" }, { name: "System" }],
     components: {
       securitySchemes: {
         bearerAuth: {
@@ -694,7 +902,7 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
       }
     },
     paths: {
-      "/api/auth/login": {
+      "/api/v1/auth/login": {
         post: {
           summary: "Login",
           description: "Authenticates a user, returns an access token, and sets a refresh token cookie.",
@@ -727,7 +935,7 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
           }
         }
       },
-      "/api/auth/refresh": {
+      "/api/v1/auth/refresh": {
         post: {
           summary: "Refresh access token",
           description: "Uses the HttpOnly refresh token cookie to issue a new access token.",
@@ -743,7 +951,7 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
           }
         }
       },
-      "/api/auth/logout": {
+      "/api/v1/auth/logout": {
         post: {
           summary: "Logout",
           description: "Revokes the refresh token cookie and ends the current session.",
@@ -756,7 +964,7 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
           }
         }
       },
-      "/api/auth/me": {
+      "/api/v1/auth/me": {
         get: {
           summary: "Current user session",
           description: "Returns the current authenticated user profile from the bearer token.",
@@ -769,6 +977,112 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
             401: {
               description: "Authentication required"
             }
+          }
+        }
+      },
+      "/api/v1/health": {
+        get: {
+          summary: "API health check",
+          description: "Returns a lightweight API liveness response.",
+          tags: ["System"],
+          security: [],
+          responses: {
+            200: {
+              description: "API is running"
+            }
+          }
+        }
+      },
+      "/api/v1/db-check": {
+        get: {
+          summary: "Database connectivity check",
+          description: "Checks whether the API can query the configured database.",
+          tags: ["System"],
+          security: [],
+          responses: {
+            200: { description: "Database connection is healthy" },
+            500: { description: "Database connection failed" }
+          }
+        }
+      },
+      "/api/v1/dealers": {
+        get: {
+          summary: "Dealer references",
+          description: "Returns active dealer reference values within the signed-in user's Sales access scope.",
+          tags: ["References"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { in: "query", name: "city", schema: { type: "string" } },
+            { in: "query", name: "dealerType", schema: { type: "string" } },
+            { in: "query", name: "region", schema: { type: "string" } },
+            { in: "query", name: "state", schema: { type: "string" } },
+            { in: "query", name: "limit", schema: { default: 1000, maximum: 1000, type: "integer" } },
+            { in: "query", name: "offset", schema: { default: 0, minimum: 0, type: "integer" } }
+          ],
+          responses: {
+            200: {
+              description: "Dealer reference response",
+              content: {
+                "application/json": {
+                  schema: dealerReferenceResponseSchema
+                }
+              }
+            },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        }
+      },
+      "/api/v1/models": {
+        get: {
+          summary: "Vehicle model references",
+          description: "Returns active, non-discontinued vehicle models for Sales forecast filters.",
+          tags: ["References"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { in: "query", name: "manufacturer", schema: { type: "string" } },
+            { in: "query", name: "segment", schema: { type: "string" } },
+            { in: "query", name: "limit", schema: { default: 1000, maximum: 1000, type: "integer" } },
+            { in: "query", name: "offset", schema: { default: 0, minimum: 0, type: "integer" } }
+          ],
+          responses: {
+            200: {
+              description: "Vehicle model reference response",
+              content: {
+                "application/json": {
+                  schema: modelReferenceResponseSchema
+                }
+              }
+            },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        }
+      },
+      "/api/v1/variants": {
+        get: {
+          summary: "Vehicle variant references",
+          description: "Returns active, non-discontinued vehicle variants for Sales forecast filters.",
+          tags: ["References"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { in: "query", name: "fuelType", schema: { type: "string" } },
+            { in: "query", name: "modelId", schema: { type: "string" } },
+            { in: "query", name: "transmission", schema: { type: "string" } },
+            { in: "query", name: "limit", schema: { default: 1000, maximum: 1000, type: "integer" } },
+            { in: "query", name: "offset", schema: { default: 0, minimum: 0, type: "integer" } }
+          ],
+          responses: {
+            200: {
+              description: "Vehicle variant reference response",
+              content: {
+                "application/json": {
+                  schema: variantReferenceResponseSchema
+                }
+              }
+            },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
           }
         }
       },
@@ -975,6 +1289,39 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
           }
         }
       },
+      "/api/v1/forecasts/kpis": {
+        get: {
+          summary: "Sales forecast KPI cards",
+          description: "Returns Sales dashboard KPI card values such as forecast accuracy, actuals versus forecast, bias, and inventory coverage.",
+          tags: ["Forecasts"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "query",
+              name: "level",
+              schema: { enum: ["dealer", "state", "zone"], type: "string" }
+            },
+            { in: "query", name: "groupId", schema: { type: "string" } },
+            { in: "query", name: "segment", schema: { type: "string" } },
+            { in: "query", name: "modelId", schema: { type: "string" } },
+            { in: "query", name: "variantId", schema: { type: "string" } },
+            { in: "query", name: "window", schema: { default: 6, enum: [1, 3, 6, 12, 24], type: "integer" } }
+          ],
+          responses: {
+            200: {
+              description: "Sales KPI response",
+              content: {
+                "application/json": {
+                  schema: salesKpiResponseSchema
+                }
+              }
+            },
+            400: { description: "Invalid query parameters" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        }
+      },
       "/api/v1/forecasts/regional": buildForecastPath(
         "Regional forecasts",
         "Returns regional forecast records using zone-level stored forecasts."
@@ -1036,6 +1383,214 @@ export function buildOpenApiSpec(baseUrl = "http://localhost:4000") {
         },
         aftersalesForecastParameters
       ),
+      "/api/v1/customer-service/transcripts": {
+        get: {
+          summary: "List customer service transcripts",
+          description: "Returns customer service transcript records visible to the signed-in user's access scopes.",
+          tags: ["Customer Service"],
+          security: [{ bearerAuth: [] }],
+          parameters: customerServiceListParameters,
+          responses: {
+            200: {
+              description: "Transcript list response",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                      pagination: { type: "object" },
+                      data: {
+                        type: "array",
+                        items: customerServiceTranscriptSchema
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" }
+          }
+        },
+        post: {
+          summary: "Create customer service transcript",
+          description: "Creates a text transcript and queues asynchronous analysis by default. Audio metadata is accepted for future speech-to-text ingestion, but transcriptText is currently required.",
+          tags: ["Customer Service"],
+          security: [{ bearerAuth: [] }],
+          requestBody: buildJsonRequestBody(customerServiceTranscriptCreateSchema, {
+            ownershipDomain: "Service",
+            sourceType: "Text",
+            serviceCenterId: "SVC001",
+            channel: "Phone",
+            transcriptText: "Customer called about a delayed repair and requested an urgent callback.",
+            analyze: true
+          }),
+          responses: {
+            202: {
+              description: "Transcript created and analysis queued",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                      transcript: customerServiceTranscriptSchema,
+                      job: customerServiceJobSchema
+                    }
+                  }
+                }
+              }
+            },
+            400: { description: "Invalid transcript payload" },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied or ownership outside scope" }
+          }
+        }
+      },
+      "/api/v1/customer-service/transcripts/{transcriptId}": {
+        get: {
+          summary: "Get customer service transcript detail",
+          description: "Returns transcript detail, latest analysis, extracted entities, actions, jobs, and recent audit entries.",
+          tags: ["Customer Service"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "transcriptId",
+              required: true,
+              schema: { type: "integer" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Transcript detail response",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                      transcript: customerServiceTranscriptSchema,
+                      analysis: customerServiceAnalysisSchema,
+                      entities: { type: "array", items: { type: "object" } },
+                      actions: { type: "array", items: { type: "object" } },
+                      jobs: { type: "array", items: customerServiceJobSchema },
+                      audit: { type: "array", items: customerServiceAuditSchema }
+                    }
+                  }
+                }
+              }
+            },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" },
+            404: { description: "Transcript not found or outside scope" }
+          }
+        }
+      },
+      "/api/v1/customer-service/transcripts/{transcriptId}/analyze": {
+        post: {
+          summary: "Queue customer service transcript analysis",
+          description: "Queues a transcript for asynchronous AI analysis.",
+          tags: ["Customer Service"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "transcriptId",
+              required: true,
+              schema: { type: "integer" }
+            }
+          ],
+          responses: {
+            202: {
+              description: "Analysis job queued",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                      job: customerServiceJobSchema
+                    }
+                  }
+                }
+              }
+            },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" },
+            404: { description: "Transcript not found or outside scope" }
+          }
+        }
+      },
+      "/api/v1/customer-service/transcripts/{transcriptId}/jobs": {
+        get: {
+          summary: "List customer service analysis jobs",
+          tags: ["Customer Service"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "transcriptId",
+              required: true,
+              schema: { type: "integer" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Analysis jobs",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                      jobs: { type: "array", items: customerServiceJobSchema }
+                    }
+                  }
+                }
+              }
+            },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" },
+            404: { description: "Transcript not found or outside scope" }
+          }
+        }
+      },
+      "/api/v1/customer-service/transcripts/{transcriptId}/audit": {
+        get: {
+          summary: "List customer service transcript audit log",
+          tags: ["Customer Service"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "transcriptId",
+              required: true,
+              schema: { type: "integer" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Audit log",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                      audit: { type: "array", items: customerServiceAuditSchema }
+                    }
+                  }
+                }
+              }
+            },
+            401: { description: "Authentication required" },
+            403: { description: "Permission denied" },
+            404: { description: "Transcript not found or outside scope" }
+          }
+        }
+      },
       "/api/v1/forecasts/admin/status": {
         get: {
           summary: "Forecast admin status",

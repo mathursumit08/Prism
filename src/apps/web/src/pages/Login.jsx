@@ -30,12 +30,12 @@ export default function LoginPage() {
           <img
             className="login-logo"
             src="/resources/images/prism-sales-forecasting-logo.png"
-            alt="PRISM Sales Forecasting"
+            alt="PRISM Forecasting & Service Intelligence"
           />
           <p className="eyebrow">Secure Planning Workspace</p>
           <h1>Sign in</h1>
           <p>
-            Access the sales planning workspace to review forecasts, diagnostics, events, and administration tools.
+            Access the forecasting and service intelligence workspace to review sales, aftersales, diagnostics, events, transcripts, and administration tools.
           </p>
         </div>
 

@@ -249,8 +249,7 @@ export async function getSalesKpiPayload(user, query, db = pool) {
   validateLevel(level);
   await ensureUserScopeAccess(user, level || "zone", groupId);
 
-  const forecastRows = await ForecastData.findLatest({
-    forecastType: "baseline",
+  const forecastSummary = await getSalesKpiForecastSummary({
     level,
     groupId,
     segment,
@@ -259,13 +258,8 @@ export async function getSalesKpiPayload(user, query, db = pool) {
     scope,
     startDate,
     horizon
-  });
-  const forecastUnits = forecastRows.reduce((sum, row) => sum + Number(row.forecast_units || 0), 0);
-  const mapeValues = forecastRows
-    .map((row) => Number(row.validation_mape))
-    .filter((value) => Number.isFinite(value));
-  const averageMape = mapeValues.length ? mapeValues.reduce((sum, value) => sum + value, 0) / mapeValues.length : null;
-  const forecastAccuracy = averageMape === null ? null : Math.max(0, 100 - averageMape);
+  }, db);
+  const forecastUnits = forecastSummary.forecastUnits;
 
   const actualValues = [];
   const actualConditions = [
@@ -309,39 +303,39 @@ export async function getSalesKpiPayload(user, query, db = pool) {
 
   const actualResult = await db.query(
     `
-      WITH source_rows AS (
-        SELECT
-          m.month,
-          m.units_sold,
-          m.stock_available,
-          m.inventory_days
-        FROM monthly_sales_data m
-        JOIN dealers d ON d.dealer_id = m.dealer_id
-        JOIN vehicle_models vm ON vm.model_id = m.model_id
-        JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
-          AND vv.model_id = m.model_id
-        WHERE ${actualConditions.join(" AND ")}
-      ),
-      latest_month AS (
-        SELECT MAX(month) AS max_month FROM source_rows
+      WITH latest_month AS (
+        SELECT MAX(month) AS max_month
+        FROM monthly_sales_data
       )
       SELECT
-        SUM(units_sold)::NUMERIC AS actual_units,
-        SUM(stock_available)::NUMERIC AS stock_available,
-        AVG(inventory_days)::NUMERIC AS inventory_days,
-        TO_CHAR(MIN(month), 'YYYY-MM-01') AS actual_start_month,
-        TO_CHAR(MAX(month), 'YYYY-MM-01') AS actual_end_month
-      FROM source_rows
+        SUM(m.units_sold)::NUMERIC AS actual_units,
+        SUM(m.stock_available)::NUMERIC AS stock_available,
+        AVG(m.inventory_days)::NUMERIC AS inventory_days,
+        TO_CHAR(MIN(m.month), 'YYYY-MM-01') AS actual_start_month,
+        TO_CHAR(MAX(m.month), 'YYYY-MM-01') AS actual_end_month
+      FROM monthly_sales_data m
       CROSS JOIN latest_month lm
-      WHERE lm.max_month IS NOT NULL
-        AND month >= lm.max_month - ((${horizonParameter}::INTEGER - 1) * INTERVAL '1 month')
-        AND month <= lm.max_month
+      JOIN dealers d ON d.dealer_id = m.dealer_id
+      JOIN vehicle_models vm ON vm.model_id = m.model_id
+      JOIN vehicle_variants vv ON vv.variant_id = m.variant_id
+        AND vv.model_id = m.model_id
+      WHERE ${actualConditions.join(" AND ")}
+        AND lm.max_month IS NOT NULL
+        AND m.month >= lm.max_month - ((${horizonParameter}::INTEGER - 1) * INTERVAL '1 month')
+        AND m.month <= lm.max_month
     `,
     actualValues
   );
 
   const actualRow = actualResult.rows[0] || {};
   const actualUnits = toNumber(actualRow.actual_units) || 0;
+  const validationMape = forecastSummary.averageMape;
+  const observedMape =
+    actualUnits > 0 && forecastUnits > 0
+      ? Math.abs(forecastUnits - actualUnits) / actualUnits * 100
+      : null;
+  const effectiveMape = validationMape ?? observedMape;
+  const forecastAccuracy = effectiveMape === null ? null : Math.max(0, 100 - effectiveMape);
   const actualsVsForecast = forecastUnits > 0 ? (actualUnits / forecastUnits) * 100 : null;
   const forecastBias = actualUnits > 0 ? ((forecastUnits - actualUnits) / actualUnits) * 100 : null;
 
@@ -364,8 +358,8 @@ export async function getSalesKpiPayload(user, query, db = pool) {
     kpis: {
       salesForecastAccuracy: {
         value: round(forecastAccuracy, 1),
-        mape: round(averageMape, 1),
-        sampleCount: mapeValues.length
+        mape: round(effectiveMape, 1),
+        sampleCount: forecastSummary.sampleCount
       },
       salesActualsVsForecast: {
         value: round(actualsVsForecast, 1),
@@ -409,6 +403,96 @@ function hasOnlyDealerSalesScope(scope) {
   );
 }
 
+async function getSalesKpiForecastSummary(
+  { level, groupId, segment, modelId, variantId, scope, startDate, horizon },
+  db = pool
+) {
+  const latestRun = await ForecastRun.findLatestCompleted({ forecastDomain: "Sales", forecastType: "baseline" }, db);
+  if (!latestRun) {
+    return {
+      forecastUnits: 0,
+      averageMape: null,
+      sampleCount: 0
+    };
+  }
+
+  const conditions = [
+    "fd.forecast_type = $1",
+    "fd.run_id = $2"
+  ];
+  const values = ["baseline", latestRun.run_id];
+
+  if (level) {
+    values.push(level);
+    conditions.push(`fd.level = $${values.length}`);
+  }
+
+  if (groupId) {
+    values.push(groupId);
+    conditions.push(`fd.group_id = $${values.length}`);
+  }
+
+  if (segment) {
+    values.push(segment);
+    conditions.push(`fd.segment = $${values.length}`);
+  } else if (!modelId && !variantId) {
+    conditions.push("fd.segment IS NULL");
+  }
+
+  if (modelId) {
+    values.push(modelId);
+    conditions.push(`fd.model_id = $${values.length}`);
+  } else {
+    conditions.push("fd.model_id IS NULL");
+  }
+
+  if (variantId) {
+    values.push(variantId);
+    conditions.push(`fd.variant_id = $${values.length}`);
+  } else {
+    conditions.push("fd.variant_id IS NULL");
+  }
+
+  appendForecastDataScopeCondition(conditions, values, scope);
+  if (startDate) {
+    values.push(startDate);
+    conditions.push(`fd.forecast_month >= $${values.length}::DATE`);
+  }
+
+  values.push(Number.isInteger(Number(horizon)) ? Number(horizon) : null);
+  const horizonParameter = `$${values.length}`;
+
+  const result = await db.query(
+    `
+      WITH ranked AS (
+        SELECT
+          fd.forecast_units,
+          fd.validation_mape,
+          ROW_NUMBER() OVER (
+            PARTITION BY fd.level, fd.group_id, fd.segment, fd.model_id, fd.variant_id
+            ORDER BY fd.forecast_month
+          ) AS horizon_month
+        FROM forecast_data fd
+        WHERE ${conditions.join(" AND ")}
+      )
+      SELECT
+        COALESCE(SUM(forecast_units), 0)::NUMERIC AS forecast_units,
+        AVG(validation_mape)::NUMERIC AS average_mape,
+        COUNT(validation_mape)::INTEGER AS sample_count
+      FROM ranked
+      WHERE (${horizonParameter}::INTEGER IS NULL OR horizon_month <= ${horizonParameter}::INTEGER)
+    `,
+    values
+  );
+
+  const row = result.rows[0] || {};
+  return {
+    forecastUnits: toNumber(row.forecast_units) || 0,
+    averageMape: toNumber(row.average_mape),
+    sampleCount: Number(row.sample_count || 0)
+  };
+}
+
 function appendSalesSourceScopeCondition(conditions, values, scope, dealerAlias = "d", parameterOffset = 0) {
   if (scope?.kind === "none") {
     conditions.push("FALSE");
@@ -432,6 +516,51 @@ function appendSalesSourceScopeCondition(conditions, values, scope, dealerAlias 
   if (dealerIds.length > 0) {
     values.push(dealerIds);
     checks.push(`${prefix}dealer_id = ANY($${values.length + parameterOffset}::VARCHAR[])`);
+  }
+
+  if (checks.length > 0) {
+    conditions.push(`(${checks.join(" OR ")})`);
+  }
+}
+
+function appendForecastDataScopeCondition(conditions, values, scope) {
+  if (scope?.kind === "none") {
+    conditions.push("FALSE");
+    return;
+  }
+
+  if (!scope || scope.kind === "all") {
+    return;
+  }
+
+  const regions = salesScopeRegions(scope);
+  const dealerIds = salesScopeDealerIds(scope);
+  const checks = [];
+
+  if (regions.length > 0) {
+    values.push(regions);
+    const parameter = `$${values.length}`;
+    checks.push(`
+      (
+        (fd.level = 'zone' AND fd.group_id = ANY(${parameter}::VARCHAR[]))
+        OR EXISTS (
+          SELECT 1
+          FROM dealers d_scope
+          WHERE d_scope.is_active = TRUE
+            AND d_scope.region = ANY(${parameter}::VARCHAR[])
+            AND (
+              (fd.level = 'state' AND d_scope.state = fd.group_id)
+              OR (fd.level = 'dealer' AND d_scope.dealer_id = fd.group_id)
+            )
+        )
+      )
+    `);
+  }
+
+  if (dealerIds.length > 0) {
+    values.push(dealerIds);
+    const parameter = `$${values.length}`;
+    checks.push(`(fd.level = 'dealer' AND fd.group_id = ANY(${parameter}::VARCHAR[]))`);
   }
 
   if (checks.length > 0) {

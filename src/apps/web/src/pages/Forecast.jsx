@@ -146,14 +146,26 @@ function formatWeight(value) {
 
 function getBandLabel(intervalMode) {
   if (intervalMode === "80") {
-    return "80% band";
+    return "80% Band";
   }
 
   if (intervalMode === "95") {
-    return "95% band";
+    return "95% Band";
   }
 
-  return "Point forecast only";
+  return "Point Forecast Only";
+}
+
+function getPointTitle(label, point, intervalMode) {
+  if (intervalMode === "80") {
+    return `${label}: ${formatUnits(point.unitsSold)} forecast | 80% band ${formatUnits(point.lower_80)}-${formatUnits(point.upper_80)}`;
+  }
+
+  if (intervalMode === "95") {
+    return `${label}: ${formatUnits(point.unitsSold)} forecast | 95% band ${formatUnits(point.lower_95)}-${formatUnits(point.upper_95)}`;
+  }
+
+  return `${label}: ${formatUnits(point.unitsSold)} units`;
 }
 
 function InfoEyebrow({ children, info }) {
@@ -368,7 +380,7 @@ function ForecastChart({
   return (
     <div className="chart-wrap" aria-label="Forecast units by month">
       <svg viewBox={`0 0 ${width} ${height}`} role="img">
-        <title>Forecast units by month</title>
+        <title>{`Forecast units by month - ${getBandLabel(intervalMode)}`}</title>
         {gridLines.map((line) => (
           <g key={line.y}>
             <line x1={padding.left} x2={width - padding.right} y1={line.y} y2={line.y} />
@@ -457,16 +469,28 @@ function ForecastChart({
                   cx={xFor(pointIndex)}
                   cy={yFor(point.unitsSold)}
                   r={isHovered ? 3 : 2}
-                  fill={color}
-                  opacity={seriesOpacity}
-                >
-                  <title>{`${label}: ${formatUnits(point.unitsSold)} units`}</title>
-                </circle>
-              ))}
-            </g>
+                fill={color}
+                opacity={seriesOpacity}
+              >
+                <title>{getPointTitle(label, point, intervalMode)}</title>
+              </circle>
+            ))}
+          </g>
           );
         })}
       </svg>
+      <div className="chart-legend interval-legend">
+        <span>
+          <i className="legend-line forecast-line" />
+          Forecast
+        </span>
+        {intervalMode !== "point" && (
+          <span>
+            <i className={`interval-swatch ${intervalMode === "95" ? "interval-95" : "interval-80"}`} />
+            {getBandLabel(intervalMode)}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -878,12 +902,21 @@ function AccuracyLeaderboard({ rows }) {
   );
 }
 
-function KpiMetric({ label, value, detail }) {
+function KpiMetric({ label, value, detail, isLoading = false }) {
   return (
-    <article className="kpi-card">
+    <article className={`kpi-card${isLoading ? " is-loading" : ""}`} aria-busy={isLoading}>
       <span>{label}</span>
-      <strong>{value}</strong>
-      <p>{detail}</p>
+      {isLoading ? (
+        <>
+          <strong className="kpi-skeleton kpi-skeleton-value" aria-label="Loading metric value" />
+          <p className="kpi-skeleton kpi-skeleton-detail" aria-hidden="true" />
+        </>
+      ) : (
+        <>
+          <strong>{value}</strong>
+          <p>{detail}</p>
+        </>
+      )}
     </article>
   );
 }
@@ -1011,9 +1044,9 @@ export default function ForecastPage() {
     async function fetchReferences() {
       try {
         const [dealersResponse, modelsResponse, variantsResponse] = await Promise.all([
-          apiFetch("/api/dealers", { signal: controller.signal }),
-          apiFetch("/api/models", { signal: controller.signal }),
-          apiFetch("/api/variants", { signal: controller.signal })
+          apiFetch("/api/v1/dealers", { signal: controller.signal }),
+          apiFetch("/api/v1/models", { signal: controller.signal }),
+          apiFetch("/api/v1/variants", { signal: controller.signal })
         ]);
 
         if (!dealersResponse.ok || !modelsResponse.ok || !variantsResponse.ok) {
@@ -1499,7 +1532,7 @@ export default function ForecastPage() {
       <div className="forecast-ops-main">
         <section className="forecast-ops-header">
           <div>
-            <p className="eyebrow">Operations Dashboard</p>
+            <p className="eyebrow">Sales Dashboard</p>
             <h1>{activeSectionLabel}</h1>
             <p>
               {selectedRegionLabel || "All regions"} · {segment || "All segments"} · {selectedModel?.name || "All models"}
@@ -1684,7 +1717,7 @@ export default function ForecastPage() {
 
       {referenceState.error && !dismissedMessages.referenceError && (
         <DismissibleMessage onClose={() => dismissMessage("referenceError")}>
-          Reference data could not be loaded from the database: {referenceState.error}
+          Reference data could not be loaded. Please refresh the page or contact an administrator if the issue continues.
         </DismissibleMessage>
       )}
       {dashboardCardState.error && !dismissedMessages.dashboardCardError && (
@@ -1752,29 +1785,33 @@ export default function ForecastPage() {
         {cards.salesForecastAccuracy && (
           <KpiMetric
             label="Forecast Accuracy %"
-            value={kpiState.loading ? "Loading" : formatPercent(kpiState.kpis.salesForecastAccuracy?.value)}
+            value={formatPercent(kpiState.kpis.salesForecastAccuracy?.value)}
             detail={kpiState.kpis.salesForecastAccuracy?.mape === null || kpiState.kpis.salesForecastAccuracy?.mape === undefined ? "MAPE baseline pending" : `MAPE ${formatPercent(kpiState.kpis.salesForecastAccuracy?.mape)}`}
+            isLoading={kpiState.loading}
           />
         )}
         {cards.salesActualsVsForecast && (
           <KpiMetric
             label="Sales Actuals vs Forecast"
-            value={kpiState.loading ? "Loading" : formatPercent(kpiState.kpis.salesActualsVsForecast?.value)}
+            value={formatPercent(kpiState.kpis.salesActualsVsForecast?.value)}
             detail={`${formatUnits(kpiState.kpis.salesActualsVsForecast?.actual)} actual of ${formatUnits(kpiState.kpis.salesActualsVsForecast?.forecast)} forecast`}
+            isLoading={kpiState.loading}
           />
         )}
         {cards.salesForecastBias && (
           <KpiMetric
             label="Forecast Bias %"
-            value={kpiState.loading ? "Loading" : formatPercent(kpiState.kpis.salesForecastBias?.value)}
+            value={formatPercent(kpiState.kpis.salesForecastBias?.value)}
             detail="Positive indicates forecast above recent actuals"
+            isLoading={kpiState.loading}
           />
         )}
         {cards.inventoryCoverage && (
           <KpiMetric
             label="Inventory Coverage"
-            value={kpiState.loading ? "Loading" : `${formatDecimal(kpiState.kpis.inventoryCoverage?.value)} days`}
+            value={`${formatDecimal(kpiState.kpis.inventoryCoverage?.value)} days`}
             detail={`${formatUnits(kpiState.kpis.inventoryCoverage?.stockAvailable)} stock available in recent sales data`}
+            isLoading={kpiState.loading}
           />
         )}
       </section>
