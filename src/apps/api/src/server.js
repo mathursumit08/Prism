@@ -7,6 +7,7 @@ import authRoutes from "./routes/authRoutes.js";
 import v1ForecastRoutes from "./routes/v1/forecastRoutes.js";
 import v1CustomerServiceRoutes from "./routes/v1/customerServiceRoutes.js";
 import { buildOpenApiSpec, buildSwaggerHtml } from "./openapi.js";
+import { runMigrations } from "./data/migrations/migrate.js";
 
 dotenv.config();
 
@@ -122,6 +123,16 @@ app.use("/api/v1/customer-service", v1CustomerServiceRoutes);
 app.use("/api/v1", referenceRoutes);
 app.use("/api", referenceRoutes);
 
-app.listen(port, () => {
-  console.log(`API listening on http://localhost:${port}`);
+async function startServer() {
+  await runMigrations();
+
+  app.listen(port, () => {
+    console.log(`API listening on http://localhost:${port}`);
+  });
+}
+
+startServer().catch(async (error) => {
+  console.error("API startup failed", error);
+  await pool.end().catch(() => {});
+  process.exit(1);
 });

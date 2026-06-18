@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { pool } from "../db.js";
 import { analyzeCustomerServiceTranscript } from "../services/customerServiceAiService.js";
@@ -290,16 +289,3 @@ export async function runCustomerServiceAnalysisWorker({ once = false } = {}) {
   } while (!once);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const once = process.argv.includes("--once");
-  runCustomerServiceAnalysisWorker({ once })
-    .catch((error) => {
-      console.error("[customer-service-analysis] Worker crashed", error);
-      process.exitCode = 1;
-    })
-    .finally(async () => {
-      if (once) {
-        await pool.end();
-      }
-    });
-}

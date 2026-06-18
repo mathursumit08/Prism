@@ -2,6 +2,7 @@ import { ForecastData, ForecastRun } from "../data/models/index.js";
 import { pool } from "../db.js";
 import { canAccessForecastLevel, getScope, isGroupAllowed } from "../auth/accessControl.js";
 import { ForecastCacheService } from "./forecastCacheService.js";
+import { getForecastObservedMapeSummary } from "./forecastAnalyticsService.js";
 
 const allowedLevels = new Set(["dealer", "state", "zone"]);
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -259,6 +260,14 @@ export async function getSalesKpiPayload(user, query, db = pool) {
     startDate,
     horizon
   }, db);
+  const observedSummary = await getForecastObservedMapeSummary(user, {
+    level,
+    groupId,
+    segment,
+    modelId,
+    variantId,
+    window: horizon
+  }, db);
   const forecastUnits = forecastSummary.forecastUnits;
 
   const actualValues = [];
@@ -331,10 +340,11 @@ export async function getSalesKpiPayload(user, query, db = pool) {
   const actualUnits = toNumber(actualRow.actual_units) || 0;
   const validationMape = forecastSummary.averageMape;
   const observedMape =
-    actualUnits > 0 && forecastUnits > 0
+    observedSummary.mape ??
+    (actualUnits > 0 && forecastUnits > 0
       ? Math.abs(forecastUnits - actualUnits) / actualUnits * 100
-      : null;
-  const effectiveMape = validationMape ?? observedMape;
+      : null);
+  const effectiveMape = observedMape ?? validationMape;
   const forecastAccuracy = effectiveMape === null ? null : Math.max(0, 100 - effectiveMape);
   const actualsVsForecast = forecastUnits > 0 ? (actualUnits / forecastUnits) * 100 : null;
   const forecastBias = actualUnits > 0 ? ((forecastUnits - actualUnits) / actualUnits) * 100 : null;
@@ -359,7 +369,7 @@ export async function getSalesKpiPayload(user, query, db = pool) {
       salesForecastAccuracy: {
         value: round(forecastAccuracy, 1),
         mape: round(effectiveMape, 1),
-        sampleCount: forecastSummary.sampleCount
+        sampleCount: observedSummary.sampleCount || forecastSummary.sampleCount
       },
       salesActualsVsForecast: {
         value: round(actualsVsForecast, 1),

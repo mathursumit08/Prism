@@ -335,16 +335,16 @@ export async function createTranscript(payload, user, db = pool) {
     );
 
     const transcriptRow = insertResult.rows[0];
-    await client.query(
-      `
-        INSERT INTO customer_service_transcript_analysis (transcript_id, status)
-        VALUES ($1, 'pending')
-      `,
-      [transcriptRow.transcript_id]
-    );
-
     let job = null;
     if (payload?.analyze !== false) {
+      await client.query(
+        `
+          INSERT INTO customer_service_transcript_analysis (transcript_id, status)
+          VALUES ($1, 'pending')
+        `,
+        [transcriptRow.transcript_id]
+      );
+
       const jobResult = await client.query(
         `
           INSERT INTO customer_service_analysis_jobs (transcript_id, status)
@@ -393,7 +393,6 @@ export async function listTranscripts(query, user, db = pool) {
     ["dealerId", "cst.dealer_id"],
     ["serviceCenterId", "cst.service_center_id"],
     ["channel", "cst.channel"],
-    ["status", "analysis.status"],
     ["severity", "analysis.severity"],
     ["escalationRisk", "analysis.escalation_risk"],
     ["slaBreachRisk", "analysis.sla_breach_risk"]
@@ -404,6 +403,35 @@ export async function listTranscripts(query, user, db = pool) {
     if (value) {
       values.push(value);
       where.push(`${column} = $${values.length}`);
+    }
+  }
+
+  const statusFilter = normalizeString(query.status);
+  if (statusFilter) {
+    if (statusFilter === "not_queued") {
+      where.push(`(
+        analysis.analysis_id IS NULL
+        OR (
+          analysis.status = 'pending'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM customer_service_analysis_jobs status_job
+            WHERE status_job.transcript_id = cst.transcript_id
+          )
+        )
+      )`);
+    } else if (statusFilter === "pending") {
+      where.push(`(
+        analysis.status = 'pending'
+        AND EXISTS (
+          SELECT 1
+          FROM customer_service_analysis_jobs status_job
+          WHERE status_job.transcript_id = cst.transcript_id
+        )
+      )`);
+    } else {
+      values.push(statusFilter);
+      where.push(`analysis.status = $${values.length}`);
     }
   }
 
@@ -430,7 +458,17 @@ export async function listTranscripts(query, user, db = pool) {
     `
       SELECT
         cst.*,
-        analysis.status AS analysis_status,
+        CASE
+          WHEN analysis.analysis_id IS NULL THEN 'not_queued'
+          WHEN analysis.status = 'pending'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM customer_service_analysis_jobs status_job
+              WHERE status_job.transcript_id = cst.transcript_id
+            )
+            THEN 'not_queued'
+          ELSE analysis.status
+        END AS analysis_status,
         analysis.sentiment,
         analysis.primary_intent,
         analysis.issue_category,
@@ -495,11 +533,13 @@ export async function queueTranscriptAnalysis(transcriptId, user, db = pool) {
 
     await client.query(
       `
-        UPDATE customer_service_transcript_analysis
-        SET status = 'pending',
-            error_message = NULL,
-            updated_at = NOW()
-        WHERE transcript_id = $1
+        INSERT INTO customer_service_transcript_analysis (transcript_id, status, error_message)
+        VALUES ($1, 'pending', NULL)
+        ON CONFLICT (transcript_id)
+        DO UPDATE SET
+          status = 'pending',
+          error_message = NULL,
+          updated_at = NOW()
       `,
       [transcriptId]
     );

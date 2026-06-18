@@ -7,6 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const scriptsDir = path.resolve(__dirname, "../scripts");
 const migrationLockId = 46013519;
+const invokedFile = process.argv[1] ? path.resolve(process.argv[1]) : "";
 
 async function ensureMigrationsTable(client) {
   await client.query(`
@@ -22,7 +23,7 @@ async function getAppliedMigrations(client) {
   return new Set(result.rows.map((row) => row.id));
 }
 
-async function run() {
+export async function runMigrations() {
   const client = await pool.connect();
 
   try {
@@ -52,8 +53,10 @@ async function run() {
   }
 }
 
-run().catch(async (error) => {
+if (invokedFile.toLowerCase() === __filename.toLowerCase()) {
+  runMigrations().catch(async (error) => {
   console.error(error);
   await pool.end();
   process.exit(1);
-});
+  });
+}
