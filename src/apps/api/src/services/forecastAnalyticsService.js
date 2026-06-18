@@ -202,6 +202,15 @@ function buildObservationQuery({ user, query, includeLimit = false }) {
           AND vv.is_active = TRUE
           AND vv.is_discontinued = FALSE
       ),
+      latest_completed_run AS (
+        SELECT run_id
+        FROM forecast_runs
+        WHERE forecast_domain = 'Sales'
+          AND forecast_type = 'baseline'
+          AND status = 'completed'
+        ORDER BY completed_at DESC NULLS LAST, run_id DESC
+        LIMIT 1
+      ),
       actuals AS (
         SELECT
           'dealer'::VARCHAR AS level,
@@ -297,9 +306,8 @@ function buildObservationQuery({ user, query, includeLimit = false }) {
           AVG(fd.validation_rmse) AS validation_rmse,
           AVG(fd.validation_mae) AS validation_mae
         FROM forecast_data fd
-        JOIN forecast_runs fr
-          ON fr.run_id = fd.run_id
-         AND fr.status = 'completed'
+        JOIN latest_completed_run lcr
+          ON lcr.run_id = fd.run_id
         JOIN latest_actual_month lam ON lam.max_month IS NOT NULL
         WHERE ${conditions.join(" AND ")}
           AND fd.forecast_month >= lam.max_month - (($1::INTEGER - 1) * INTERVAL '1 month')
@@ -507,6 +515,37 @@ export async function getForecastAccuracyLeaderboardPayload(user, query, db = po
       biasPct: round(row.bias_pct),
       sampleCount: Number(row.sample_count)
     }))
+  };
+}
+
+export async function getForecastObservedMapeSummary(user, query, db = pool) {
+  const observationQuery = buildObservationQuery({ user, query });
+  await ensureAnalyticsAccess(user, observationQuery.filters.level, observationQuery.filters.groupId);
+
+  const result = await db.query(
+    `
+      WITH observations AS (${observationQuery.sql})
+      SELECT
+        SUM(forecast_units)::NUMERIC AS forecast_units,
+        SUM(actual_units)::NUMERIC AS actual_units,
+        AVG(absolute_percentage_error)::NUMERIC AS mape,
+        AVG(absolute_error)::NUMERIC AS mae,
+        SQRT(AVG(error * error))::NUMERIC AS rmse,
+        COUNT(absolute_percentage_error)::INTEGER AS sample_count
+      FROM observations
+    `,
+    observationQuery.values
+  );
+
+  const row = result.rows[0] || {};
+  return {
+    filters: observationQuery.filters,
+    forecastUnits: toNumber(row.forecast_units),
+    actualUnits: toNumber(row.actual_units),
+    mape: toNumber(row.mape),
+    mae: toNumber(row.mae),
+    rmse: toNumber(row.rmse),
+    sampleCount: Number(row.sample_count || 0)
   };
 }
 

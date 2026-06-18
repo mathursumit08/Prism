@@ -112,12 +112,26 @@ function limitSeriesFromMonth(series, months, startMonth) {
     .filter((item) => item.forecast.length > 0);
 }
 
+const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function parseCalendarMonth(value) {
+  const text = String(value || "");
+  const year = text.slice(0, 4);
+  const monthIndex = Number(text.slice(5, 7)) - 1;
+
+  return {
+    year,
+    monthLabel: monthLabels[monthIndex] || "N/A"
+  };
+}
+
 function formatMonth(value) {
-  return new Intl.DateTimeFormat("en", { month: "short" }).format(new Date(value));
+  return parseCalendarMonth(value).monthLabel;
 }
 
 function formatChartMonth(value) {
-  return new Intl.DateTimeFormat("en", { month: "short", year: "2-digit" }).format(new Date(value));
+  const { monthLabel, year } = parseCalendarMonth(value);
+  return year ? `${monthLabel} '${year.slice(-2)}` : monthLabel;
 }
 
 function formatUnits(value) {
@@ -360,10 +374,10 @@ function ForecastChart({
   const points = series.flatMap((item) => item.forecast);
   const valuesForScale = points.flatMap((point) => [
     point.unitsSold,
-    intervalMode === "80" ? point.lower_80 : point.unitsSold,
-    intervalMode === "80" ? point.upper_80 : point.unitsSold,
-    intervalMode === "95" ? point.lower_95 : point.unitsSold,
-    intervalMode === "95" ? point.upper_95 : point.unitsSold
+    point.lower_80 ?? point.unitsSold,
+    point.upper_80 ?? point.unitsSold,
+    point.lower_95 ?? point.unitsSold,
+    point.upper_95 ?? point.unitsSold
   ]);
   const maxValue = Math.max(...valuesForScale, 1);
   const minValue = Math.min(...valuesForScale, 0);
@@ -1495,6 +1509,11 @@ export default function ForecastPage() {
   const breakdownSummary = hasBreakdownData
     ? summarizeSeries(visibleBreakdownSeries)
     : { total: 0, growth: 0, leader: null };
+  const openExceptionThreshold = 12;
+  const groupExceptionCount = diagnosticsState.leaderboard.filter((row) => Number(row.mape || 0) > openExceptionThreshold).length;
+  const currentViewMape = Number(kpiState.kpis.salesForecastAccuracy?.mape);
+  const currentViewExceptionCount = Number.isFinite(currentViewMape) && currentViewMape > openExceptionThreshold ? 1 : 0;
+  const openExceptionCount = Math.max(groupExceptionCount, currentViewExceptionCount);
   const actualTotals = useMemo(
     () =>
       sumSeriesByMonth(actualState.series, "actuals")
@@ -1769,8 +1788,8 @@ export default function ForecastPage() {
         </article>
         <article className="metric">
           <span>Open exceptions</span>
-          <strong>{diagnosticsState.leaderboard.filter((row) => Number(row.mape || 0) > 12).length}</strong>
-          <p>MAPE above 12% in the current view</p>
+          <strong>{openExceptionCount}</strong>
+          <p>MAPE above {openExceptionThreshold}% in the current view</p>
         </article>
         <article className="metric">
           <span>Visible series</span>

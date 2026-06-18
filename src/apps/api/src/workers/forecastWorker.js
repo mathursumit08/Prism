@@ -1398,30 +1398,7 @@ async function runDomainForecastWorker({
   }
 }
 
-/**
- * Keeps the worker process alive and schedules the next run for midnight.
- */
-function scheduleNextRun() {
-  const delay = nextMidnightDelay();
-  const runAt = new Date(Date.now() + delay);
-
-  console.log(`Forecast worker scheduled for ${runAt.toLocaleString()}`);
-
-  setTimeout(async () => {
-    try {
-      await runAllForecastWorkers();
-    } catch {
-      // Failure is already logged and stored in forecast_runs.
-    } finally {
-      scheduleNextRun();
-    }
-  }, delay);
-}
-
-if (isDirectWorkerExecution) {
-  const runOnce = process.argv.includes("--once");
-  const domainArgument = process.argv.find((argument) => argument.startsWith("--domain="));
-  const requestedDomain = domainArgument?.split("=")[1] ?? "all";
+function getRunnerByDomain(requestedDomain = "all") {
   const runnerByDomain = {
     all: runAllForecastWorkers,
     sales: runForecastWorker,
@@ -1430,11 +1407,53 @@ if (isDirectWorkerExecution) {
     warranty: runWarrantyForecastWorker,
     sla: runSlaForecastWorker
   };
-  const runner = runnerByDomain[requestedDomain] ?? runAllForecastWorkers;
+
+  return runnerByDomain[String(requestedDomain || "all").toLowerCase()] ?? runAllForecastWorkers;
+}
+
+export function getForecastWorkerDomainArgument(argv = process.argv) {
+  const domainArgument = argv.find((argument) => argument.startsWith("--domain="));
+  return domainArgument?.split("=")[1] ?? "all";
+}
+
+/**
+ * Keeps the worker process alive and schedules the next run for midnight.
+ */
+function scheduleNextRun(runner = runAllForecastWorkers) {
+  const delay = nextMidnightDelay();
+  const runAt = new Date(Date.now() + delay);
+
+  console.log(`Forecast worker scheduled for ${runAt.toLocaleString()}`);
+
+  setTimeout(async () => {
+    try {
+      await runner();
+    } catch {
+      // Failure is already logged and stored in forecast_runs.
+    } finally {
+      scheduleNextRun(runner);
+    }
+  }, delay);
+}
+
+export function startForecastWorker({ requestedDomain = "all" } = {}) {
+  const runner = getRunnerByDomain(requestedDomain);
+  console.log(`Forecast worker started in scheduled mode for ${requestedDomain}.`);
+  scheduleNextRun(runner);
+}
+
+export async function runForecastWorkerOnce({ requestedDomain = "all" } = {}) {
+  const runner = getRunnerByDomain(requestedDomain);
+  console.log(`Forecast worker starting one-time run for ${requestedDomain}.`);
+  return runner();
+}
+
+if (isDirectWorkerExecution) {
+  const runOnce = process.argv.includes("--once");
+  const requestedDomain = getForecastWorkerDomainArgument();
 
   if (runOnce) {
-    console.log(`Forecast worker starting one-time run for ${requestedDomain}.`);
-    runner()
+    runForecastWorkerOnce({ requestedDomain })
       .then(async () => {
         await pool.end();
       })
@@ -1443,7 +1462,6 @@ if (isDirectWorkerExecution) {
         process.exit(1);
       });
   } else {
-    console.log("Forecast worker started in scheduled mode.");
-    scheduleNextRun();
+    startForecastWorker({ requestedDomain });
   }
 }

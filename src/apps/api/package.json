@@ -10,13 +10,12 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "preworker:forecast": "npm run migrate",
-    "worker:forecast": "node src/workers/forecastWorker.js",
-    "worker:customer-service-analysis": "node src/workers/customerServiceAnalysisWorker.js",
+    "worker:forecast": "node src/workers/startForecastWorker.js",
+    "worker:customer-service-analysis": "node src/workers/startCustomerServiceAnalysisWorker.js",
     "preforecast:run": "npm run migrate",
-    "forecast:run": "node src/workers/forecastWorker.js --once",
-    "customer-service-analysis:run": "node src/workers/customerServiceAnalysisWorker.js --once",
+    "forecast:run": "node src/workers/runForecastWorkerOnce.js",
+    "customer-service-analysis:run": "node src/workers/runCustomerServiceAnalysisOnce.js",
     "migrate": "node src/data/migrations/migrate.js",
-    "prestart": "npm run migrate",
     "db:generate-seed": "node src/data/migrations/generateSeedSql.js"
   },
   "dependencies": {

@@ -4,7 +4,7 @@ import DismissibleMessage from "../components/DismissibleMessage.jsx";
 
 const ownershipDomains = ["Customer Service", "Service", "Parts", "Warranty", "SLA", "Sales", "General"];
 const channels = ["Phone", "WhatsApp", "Email", "Chat", "Walk-in", "Other"];
-const statuses = ["", "pending", "processing", "completed", "failed"];
+const statuses = ["", "not_queued", "pending", "processing", "completed", "failed"];
 const activeAnalysisStatuses = new Set(["pending", "processing"]);
 const configuredActiveRefreshMs = Number(import.meta.env.VITE_CUSTOMER_SERVICE_TRANSCRIPT_POLL_MS || 10000);
 const activeRefreshMs = Number.isFinite(configuredActiveRefreshMs) && configuredActiveRefreshMs >= 3000
@@ -75,6 +75,27 @@ function countBy(items, key) {
   }, {});
 }
 
+function getEffectiveAnalysisStatus(detail) {
+  const analysisStatus = detail?.analysis?.status;
+  const hasJobs = (detail?.jobs || []).length > 0;
+  if (!analysisStatus) return "not_queued";
+  if (analysisStatus === "pending" && !hasJobs) return "not_queued";
+  return analysisStatus;
+}
+
+function hasDisplayableAnalysis(detail) {
+  const status = getEffectiveAnalysisStatus(detail);
+  return Boolean(detail?.analysis && status !== "not_queued");
+}
+
+function getAnalyzeButtonLabel(detail) {
+  const status = getEffectiveAnalysisStatus(detail);
+  if (status === "not_queued") return "Analyze/Queue";
+  if (status === "pending") return "Queued";
+  if (status === "processing") return "Processing";
+  return "Re-analyze";
+}
+
 function toApiPayload(form) {
   return {
     ...form,
@@ -112,12 +133,18 @@ export default function CustomerServiceTranscriptsPage() {
   });
 
   const selectedTranscriptId = detailState.detail?.transcript?.transcriptId;
+  const detailAnalysisStatus = getEffectiveAnalysisStatus(detailState.detail);
+  const detailHasDisplayableAnalysis = hasDisplayableAnalysis(detailState.detail);
+  const isSelectedAnalysisActive = activeAnalysisStatuses.has(detailAnalysisStatus);
+  const detailActions = detailState.detail?.actions || [];
+  const detailAudit = detailState.detail?.audit || [];
+  const hasDetailActions = detailActions.length > 0;
   const counts = useMemo(() => countBy(listState.transcripts, "analysisStatus"), [listState.transcripts]);
   const hasActiveAnalysis = useMemo(
     () =>
       listState.transcripts.some((transcript) => activeAnalysisStatuses.has(transcript.analysisStatus)) ||
-      activeAnalysisStatuses.has(detailState.detail?.analysis?.status),
-    [detailState.detail?.analysis?.status, listState.transcripts]
+      activeAnalysisStatuses.has(getEffectiveAnalysisStatus(detailState.detail)),
+    [detailState.detail, listState.transcripts]
   );
   const highRiskCount = useMemo(
     () =>
@@ -593,21 +620,21 @@ export default function CustomerServiceTranscriptsPage() {
                 type="button"
                 className="secondary-button"
                 onClick={() => queueAnalysis(detailState.detail.transcript.transcriptId)}
-                disabled={actionState.loading}
+                disabled={actionState.loading || isSelectedAnalysisActive}
               >
-                Re-analyze
+                {getAnalyzeButtonLabel(detailState.detail)}
               </button>
             )}
           </div>
 
           {detailState.loading ? (
-            <div className="empty-chart">Loading analysis...</div>
-          ) : detailState.detail?.analysis ? (
+            <div className="customer-empty-state">Loading analysis...</div>
+          ) : detailHasDisplayableAnalysis ? (
             <div className="customer-analysis-panel">
               <div className="risk-grid">
                 <div>
                   <span>Status</span>
-                  <strong>{sentenceCase(detailState.detail.analysis.status)}</strong>
+                  <strong>{sentenceCase(detailAnalysisStatus)}</strong>
                 </div>
                 <div>
                   <span>Sentiment</span>
@@ -633,38 +660,44 @@ export default function CustomerServiceTranscriptsPage() {
               </div>
             </div>
           ) : (
-            <div className="empty-chart">Select a transcript to inspect analysis.</div>
+            <div className="customer-empty-state">
+              {detailState.detail?.transcript
+                ? "This transcript has not been queued for analysis yet."
+                : "Select a transcript to inspect analysis."}
+            </div>
           )}
         </article>
 
         <article className="forecast-panel">
           <div className="panel-heading compact">
             <div>
-              <p className="eyebrow">Actions & Audit</p>
-              <h2>Follow-up trail</h2>
+              <p className="eyebrow">{hasDetailActions ? "Actions & History" : "History"}</p>
+              <h2>{hasDetailActions ? "Follow-up trail" : "Activity history"}</h2>
             </div>
           </div>
 
-          <div className="customer-action-list">
-            {(detailState.detail?.actions || []).length > 0 ? (
-              detailState.detail.actions.map((action) => (
+          {hasDetailActions && (
+            <div className="customer-action-list">
+              {detailActions.map((action) => (
                 <div key={action.actionId} className="customer-action-row">
                   <strong>{action.actionLabel}</strong>
                   <span>{sentenceCase(action.priority)} priority · {action.ownerTeam || "Unassigned"}</span>
                 </div>
+              ))}
+            </div>
+          )}
+
+          <div className={`customer-audit-list ${!hasDetailActions ? "history-only" : ""}`}>
+            {detailAudit.length > 0 ? (
+              detailAudit.slice(0, 6).map((entry) => (
+                <div key={entry.auditId}>
+                  <strong>{entry.action}</strong>
+                  <span>{formatDateTime(entry.createdAt)}</span>
+                </div>
               ))
             ) : (
-              <p className="muted-copy">No follow-up actions have been generated.</p>
+              <p className="muted-copy">Audit history will appear after transcript activity.</p>
             )}
-          </div>
-
-          <div className="customer-audit-list">
-            {(detailState.detail?.audit || []).slice(0, 6).map((entry) => (
-              <div key={entry.auditId}>
-                <strong>{entry.action}</strong>
-                <span>{formatDateTime(entry.createdAt)}</span>
-              </div>
-            ))}
           </div>
         </article>
       </section>

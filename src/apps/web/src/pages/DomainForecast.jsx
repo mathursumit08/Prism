@@ -30,12 +30,26 @@ function getSeriesLabel(item) {
   return item.seriesLabel || item.groupLabel;
 }
 
+const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function parseCalendarMonth(value) {
+  const text = String(value || "");
+  const year = text.slice(0, 4);
+  const monthIndex = Number(text.slice(5, 7)) - 1;
+
+  return {
+    year,
+    monthLabel: monthLabels[monthIndex] || "N/A"
+  };
+}
+
 function formatMonth(value) {
-  return new Intl.DateTimeFormat("en", { month: "short" }).format(new Date(value));
+  return parseCalendarMonth(value).monthLabel;
 }
 
 function formatChartMonth(value) {
-  return new Intl.DateTimeFormat("en", { month: "short", year: "2-digit" }).format(new Date(value));
+  const { monthLabel, year } = parseCalendarMonth(value);
+  return year ? `${monthLabel} '${year.slice(-2)}` : monthLabel;
 }
 
 function formatUnits(value) {
@@ -269,10 +283,10 @@ function ForecastChart({ series, hoveredGroupId, onHoverGroup, intervalMode, uni
   const points = series.flatMap((item) => item.forecast);
   const valuesForScale = points.flatMap((point) => [
     point.unitsSold,
-    intervalMode === "80" ? point.lower_80 : point.unitsSold,
-    intervalMode === "80" ? point.upper_80 : point.unitsSold,
-    intervalMode === "95" ? point.lower_95 : point.unitsSold,
-    intervalMode === "95" ? point.upper_95 : point.unitsSold
+    point.lower_80 ?? point.unitsSold,
+    point.upper_80 ?? point.unitsSold,
+    point.lower_95 ?? point.unitsSold,
+    point.upper_95 ?? point.unitsSold
   ]);
   const maxValue = Math.max(...valuesForScale, 1);
   const minValue = Math.min(...valuesForScale, 0);
@@ -1024,6 +1038,16 @@ export default function DomainForecastPage({ domain }) {
   const breakdownSummary = hasBreakdownData ? summarizeSeries(visibleBreakdownSeries) : { total: 0, growth: 0, leader: null };
   const avgWidth80 = hasForecastData ? summarizeUncertainty(visibleSeries, "80") : 0;
   const avgWidth95 = hasForecastData ? summarizeUncertainty(visibleSeries, "95") : 0;
+  const openExceptionThreshold = 12;
+  const validationMapes = validationRows
+    .map((row) => Number(row.mape))
+    .filter((mape) => Number.isFinite(mape));
+  const groupExceptionCount = validationMapes.filter((mape) => mape > openExceptionThreshold).length;
+  const averageVisibleMape = validationMapes.length
+    ? validationMapes.reduce((total, mape) => total + mape, 0) / validationMapes.length
+    : null;
+  const currentViewExceptionCount = averageVisibleMape !== null && averageVisibleMape > openExceptionThreshold ? 1 : 0;
+  const openExceptionCount = Math.max(groupExceptionCount, currentViewExceptionCount);
   const chartMessage = forecastState.loading ? "Loading live forecast data..." : forecastState.error || "No forecast data is available for the selected filters.";
   const breakdownMessage = breakdownState.loading ? "Loading breakdown data..." : breakdownState.error || "No breakdown data is available for the selected filters.";
   const cards = dashboardCardState.visibility;
@@ -1189,7 +1213,7 @@ export default function DomainForecastPage({ domain }) {
               <article className="metric"><span>Run rate change</span><strong>{hasForecastData ? `${summary.growth >= 0 ? "+" : ""}${summary.growth.toFixed(1)}%` : "No data"}</strong><p>{hasForecastData ? `${formatUnits(summary.firstMonth)} to ${formatUnits(summary.lastMonth)} ${unitLabel.toLowerCase()}` : "Waiting for forecast data"}</p></article>
               <article className="metric"><span>Leading group</span><strong>{hasForecastData ? summary.leader?.groupLabel : "No data"}</strong><p>{activeLevelLabel}</p></article>
               <article className="metric"><span>Avg uncertainty band</span><strong>{hasForecastData && intervalMode !== "point" ? formatUnits(intervalMode === "95" ? avgWidth95 : avgWidth80) : "Point only"}</strong><p>{intervalMode === "point" ? "Switch interval mode to inspect uncertainty" : `${intervalMode}% interval width average`}</p></article>
-              <article className="metric"><span>Open exceptions</span><strong>{validationRows.filter((row) => Number(row.mape || 0) > 12).length}</strong><p>Groups above 12% MAPE in the current view</p></article>
+              <article className="metric"><span>Open exceptions</span><strong>{openExceptionCount}</strong><p>MAPE above {openExceptionThreshold}% in the current view</p></article>
               <article className="metric"><span>Visible series</span><strong>{visibleSeries.length}</strong><p>{activeLevelLabel.toLowerCase()} rows matching filters</p></article>
             </section>
 

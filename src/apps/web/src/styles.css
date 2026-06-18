@@ -1183,6 +1183,7 @@ select:disabled {
 .app-content > .summary-grid,
 .app-content > .analytics-grid,
 .app-content > .forecast-event-layout,
+.app-content > .customer-detail-grid,
 .app-content > .forecast-panel,
 .app-content > .data-table,
 .app-content > .page-notice,
@@ -2064,20 +2065,32 @@ select:disabled {
 
 .customer-detail-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.65fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.82fr);
+  gap: 10px;
   width: 100%;
   max-width: none;
-  margin: 20px auto 0;
+  margin: 12px auto 0;
+  align-items: stretch;
 }
 
 .customer-detail-grid .forecast-panel {
-  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: 14px;
+}
+
+.customer-detail-grid .panel-heading {
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .customer-analysis-panel {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .customer-analysis-panel h3 {
@@ -2095,11 +2108,11 @@ select:disabled {
 .risk-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .risk-grid div {
-  padding: 12px;
+  padding: 10px;
   border: 1px solid #e2e8ed;
   border-left: 4px solid #00796b;
   border-radius: 8px;
@@ -2137,20 +2150,43 @@ select:disabled {
 .customer-action-list,
 .customer-audit-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
+}
+
+.customer-action-list {
+  flex: 1;
+}
+
+.customer-empty-state {
+  display: grid;
+  flex: 1;
+  min-height: 220px;
+  margin: 0;
+  padding: 16px;
+  place-items: center;
+  color: #667085;
+  background: #fbfdff;
+  text-align: center;
+  font-weight: 750;
 }
 
 .customer-audit-list {
-  margin-top: 16px;
-  padding-top: 16px;
+  margin-top: 10px;
+  padding-top: 10px;
   border-top: 1px solid #ececec;
+}
+
+.customer-audit-list.history-only {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .customer-action-row,
 .customer-audit-list div {
   display: grid;
   gap: 5px;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid #e7e7e7;
   border-radius: 8px;
   background: #fbfbfb;
