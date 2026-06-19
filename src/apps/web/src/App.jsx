@@ -662,7 +662,7 @@ export default function App() {
               </>
             )}
 
-            {customerServiceNavItems.length > 0 && (
+            {/* {customerServiceNavItems.length > 0 && (
               <>
                 <p>Customer Service</p>
                 {customerServiceNavItems.map((item) => (
@@ -676,7 +676,7 @@ export default function App() {
                   </a>
                 ))}
               </>
-            )}
+            )} */}
 
             {manageNavItems.length > 0 && (
               <>
