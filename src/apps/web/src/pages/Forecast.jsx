@@ -354,8 +354,8 @@ function transformVersionedRowsToSeries(rows) {
 
 function ForecastChart({
   series,
-  hoveredGroupId,
-  onHoverGroup,
+  focusedGroupId,
+  onFocusGroup,
   intervalMode = "point",
   message = "Forecast data will appear here when it is available."
 }) {
@@ -383,6 +383,7 @@ function ForecastChart({
   const minValue = Math.min(...valuesForScale, 0);
   const range = Math.max(maxValue - minValue, 1);
   const monthCount = series[0]?.forecast.length || 1;
+  const effectiveFocusedGroupId = focusedGroupId || getSeriesId(series[0]);
 
   const xFor = (index) => padding.left + (index / Math.max(monthCount - 1, 1)) * chartWidth;
   const yFor = (value) => padding.top + chartHeight - ((value - minValue) / range) * chartHeight;
@@ -436,33 +437,40 @@ function ForecastChart({
 
             return `${upperPath} ${lowerPath} Z`;
           };
-          const isHovered = hoveredGroupId === seriesId;
-          const hasHoveredSeries = Boolean(hoveredGroupId);
+          const isFocused = effectiveFocusedGroupId === seriesId;
+          const hasFocusedSeries = Boolean(effectiveFocusedGroupId);
           const color = getSeriesColor(itemIndex, series.length);
-          const seriesOpacity = isHovered ? 1 : hasHoveredSeries ? 0.14 : 0.5;
-          const bandOpacity = isHovered ? 0.2 : hasHoveredSeries ? 0.04 : 0.08;
+          const seriesOpacity = isFocused ? 1 : hasFocusedSeries ? 0.14 : 0.5;
+          const bandOpacity = isFocused ? 0.22 : 0;
 
           return (
             <g
               key={seriesId}
-              className={isHovered ? "series active" : "series"}
-              onMouseEnter={() => onHoverGroup(seriesId)}
-              onMouseLeave={() => onHoverGroup("")}
+              className={isFocused ? "series active" : "series"}
+              onClick={() => onFocusGroup(seriesId)}
+              role="button"
+              tabIndex="0"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onFocusGroup(seriesId);
+                }
+              }}
             >
-              {intervalMode === "95" && (
+              {isFocused && intervalMode === "95" && (
                 <path
                   d={buildBandPath("lower_95", "upper_95")}
-                  fill={color}
+                  style={{ fill: color }}
                   opacity={bandOpacity}
                   stroke="none"
                 >
                   <title>{`${label}: 95% prediction interval`}</title>
                 </path>
               )}
-              {intervalMode === "80" && (
+              {isFocused && intervalMode === "80" && (
                 <path
                   d={buildBandPath("lower_80", "upper_80")}
-                  fill={color}
+                  style={{ fill: color }}
                   opacity={bandOpacity + 0.08}
                   stroke="none"
                 >
@@ -472,7 +480,7 @@ function ForecastChart({
               <path
                 d={path}
                 stroke={color}
-                strokeWidth={isHovered ? 2 : 1}
+                strokeWidth={isFocused ? 3 : 1.5}
                 opacity={seriesOpacity}
               >
                 <title>{label}</title>
@@ -482,9 +490,11 @@ function ForecastChart({
                   key={`${seriesId}-${point.month}`}
                   cx={xFor(pointIndex)}
                   cy={yFor(point.unitsSold)}
-                  r={isHovered ? 3 : 2}
-                fill={color}
-                opacity={seriesOpacity}
+                  r={isFocused ? 5 : 2}
+                  fill={color}
+                  stroke={isFocused ? "#ffffff" : "none"}
+                  strokeWidth={isFocused ? 2 : 0}
+                  opacity={seriesOpacity}
               >
                 <title>{getPointTitle(label, point, intervalMode)}</title>
               </circle>
@@ -1977,8 +1987,8 @@ export default function ForecastPage() {
 
         <ForecastChart
           series={visibleSeries}
-          hoveredGroupId={hoveredGroupId}
-          onHoverGroup={setHoveredGroupId}
+          focusedGroupId={hoveredGroupId}
+          onFocusGroup={setHoveredGroupId}
           intervalMode={intervalMode}
           message={chartMessage}
         />
@@ -1986,15 +1996,16 @@ export default function ForecastPage() {
         {hasForecastData && (
           <div className="legend">
             {visibleSeries.map((item, index) => (
-              <span
+              <button
+                type="button"
                 key={getSeriesId(item)}
-                className={hoveredGroupId === getSeriesId(item) ? "active" : ""}
-                onMouseEnter={() => setHoveredGroupId(getSeriesId(item))}
-                onMouseLeave={() => setHoveredGroupId("")}
+                className={(hoveredGroupId || getSeriesId(visibleSeries[0])) === getSeriesId(item) ? "active" : ""}
+                onClick={() => setHoveredGroupId(getSeriesId(item))}
+                aria-pressed={(hoveredGroupId || getSeriesId(visibleSeries[0])) === getSeriesId(item)}
               >
                 <i style={{ backgroundColor: getSeriesColor(index, visibleSeries.length, 0.5) }} />
                 {getSeriesLabel(item)}
-              </span>
+              </button>
             ))}
           </div>
         )}
@@ -2018,8 +2029,8 @@ export default function ForecastPage() {
 
         <ForecastChart
           series={visibleBreakdownSeries}
-          hoveredGroupId={hoveredBreakdownId}
-          onHoverGroup={setHoveredBreakdownId}
+          focusedGroupId={hoveredBreakdownId}
+          onFocusGroup={setHoveredBreakdownId}
           intervalMode={intervalMode}
           message={breakdownMessage}
         />
@@ -2027,15 +2038,16 @@ export default function ForecastPage() {
         {hasBreakdownData && (
           <div className="legend">
             {visibleBreakdownSeries.map((item, index) => (
-              <span
+              <button
+                type="button"
                 key={getSeriesId(item)}
-                className={hoveredBreakdownId === getSeriesId(item) ? "active" : ""}
-                onMouseEnter={() => setHoveredBreakdownId(getSeriesId(item))}
-                onMouseLeave={() => setHoveredBreakdownId("")}
+                className={(hoveredBreakdownId || getSeriesId(visibleBreakdownSeries[0])) === getSeriesId(item) ? "active" : ""}
+                onClick={() => setHoveredBreakdownId(getSeriesId(item))}
+                aria-pressed={(hoveredBreakdownId || getSeriesId(visibleBreakdownSeries[0])) === getSeriesId(item)}
               >
                 <i style={{ backgroundColor: getSeriesColor(index, visibleBreakdownSeries.length, 0.5) }} />
                 {getSeriesLabel(item)}
-              </span>
+              </button>
             ))}
           </div>
         )}

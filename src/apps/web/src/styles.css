@@ -2271,13 +2271,16 @@ svg text {
   margin-top: 16px;
 }
 
-.legend span {
+.legend button {
   display: inline-flex;
   gap: 8px;
   align-items: center;
   padding: 5px 7px;
+  border: 0;
   border-radius: 6px;
+  background: transparent;
   color: #333333;
+  font: inherit;
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -2286,16 +2289,25 @@ svg text {
     transform 160ms ease;
 }
 
-.legend span.active {
+.legend button.active {
   color: #111111;
   background: #eef4f1;
   transform: translateY(-1px);
+}
+
+.legend button:focus-visible {
+  outline: 2px solid #00796b;
+  outline-offset: 2px;
 }
 
 .legend i {
   width: 12px;
   height: 12px;
   border-radius: 50%;
+}
+
+.series {
+  cursor: pointer;
 }
 
 .chart-legend {

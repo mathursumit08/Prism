@@ -271,7 +271,7 @@ function InfoEyebrow({ children, info }) {
   );
 }
 
-function ForecastChart({ series, hoveredGroupId, onHoverGroup, intervalMode, unitLabel, message }) {
+function ForecastChart({ series, focusedGroupId, onFocusGroup, intervalMode, unitLabel, message }) {
   if (!series.length) return <div className="empty-chart">{message}</div>;
 
   const width = 920;
@@ -292,6 +292,7 @@ function ForecastChart({ series, hoveredGroupId, onHoverGroup, intervalMode, uni
   const minValue = Math.min(...valuesForScale, 0);
   const range = Math.max(maxValue - minValue, 1);
   const monthCount = series[0]?.forecast.length || 1;
+  const effectiveFocusedGroupId = focusedGroupId || getSeriesId(series[0]);
   const xFor = (index) => padding.left + (index / Math.max(monthCount - 1, 1)) * chartWidth;
   const yFor = (value) => padding.top + chartHeight - ((Number(value || 0) - minValue) / range) * chartHeight;
 
@@ -317,10 +318,10 @@ function ForecastChart({ series, hoveredGroupId, onHoverGroup, intervalMode, uni
           const seriesId = getSeriesId(item);
           const label = getSeriesLabel(item);
           const color = getSeriesColor(itemIndex, series.length);
-          const isHovered = hoveredGroupId === seriesId;
-          const hasHoveredSeries = Boolean(hoveredGroupId);
-          const seriesOpacity = isHovered ? 1 : hasHoveredSeries ? 0.14 : 0.52;
-          const bandOpacity = isHovered ? 0.2 : hasHoveredSeries ? 0.04 : 0.08;
+          const isFocused = effectiveFocusedGroupId === seriesId;
+          const hasFocusedSeries = Boolean(effectiveFocusedGroupId);
+          const seriesOpacity = isFocused ? 1 : hasFocusedSeries ? 0.14 : 0.52;
+          const bandOpacity = isFocused ? 0.22 : 0;
           const path = item.forecast.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${xFor(pointIndex)} ${yFor(point.unitsSold)}`).join(" ");
           const buildBandPath = (lowerKey, upperKey) => {
             const upperPath = item.forecast.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${xFor(pointIndex)} ${yFor(point[upperKey] ?? point.unitsSold)}`).join(" ");
@@ -332,14 +333,35 @@ function ForecastChart({ series, hoveredGroupId, onHoverGroup, intervalMode, uni
           };
 
           return (
-            <g key={seriesId} onMouseEnter={() => onHoverGroup(seriesId)} onMouseLeave={() => onHoverGroup("")}>
-              {intervalMode === "95" && <path d={buildBandPath("lower_95", "upper_95")} fill={color} opacity={bandOpacity} stroke="none" />}
-              {intervalMode === "80" && <path d={buildBandPath("lower_80", "upper_80")} fill={color} opacity={bandOpacity + 0.08} stroke="none" />}
-              <path d={path} stroke={color} strokeWidth={isHovered ? 2 : 1} opacity={seriesOpacity}>
+            <g
+              key={seriesId}
+              className={isFocused ? "series active" : "series"}
+              onClick={() => onFocusGroup(seriesId)}
+              role="button"
+              tabIndex="0"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onFocusGroup(seriesId);
+                }
+              }}
+            >
+              {isFocused && intervalMode === "95" && <path d={buildBandPath("lower_95", "upper_95")} style={{ fill: color }} opacity={bandOpacity} stroke="none" />}
+              {isFocused && intervalMode === "80" && <path d={buildBandPath("lower_80", "upper_80")} style={{ fill: color }} opacity={bandOpacity + 0.08} stroke="none" />}
+              <path d={path} stroke={color} strokeWidth={isFocused ? 3 : 1.5} opacity={seriesOpacity}>
                 <title>{label}</title>
               </path>
               {item.forecast.map((point, pointIndex) => (
-                <circle key={`${seriesId}-${point.month}`} cx={xFor(pointIndex)} cy={yFor(point.unitsSold)} r={isHovered ? 3 : 2} fill={color} opacity={seriesOpacity}>
+                <circle
+                  key={`${seriesId}-${point.month}`}
+                  cx={xFor(pointIndex)}
+                  cy={yFor(point.unitsSold)}
+                  r={isFocused ? 5 : 2}
+                  fill={color}
+                  stroke={isFocused ? "#ffffff" : "none"}
+                  strokeWidth={isFocused ? 2 : 0}
+                  opacity={seriesOpacity}
+                >
                   <title>{getPointTitle(label, point, intervalMode, unitLabel)}</title>
                 </circle>
               ))}
@@ -1293,19 +1315,20 @@ export default function DomainForecastPage({ domain }) {
                   </div>
                   <div className="panel-pill-group"><span className="source-pill interval-context">{getBandLabel(intervalMode)}</span></div>
                 </div>
-                <ForecastChart series={visibleSeries} hoveredGroupId={hoveredGroupId} onHoverGroup={setHoveredGroupId} intervalMode={intervalMode} unitLabel={unitLabel} message={chartMessage} />
+                <ForecastChart series={visibleSeries} focusedGroupId={hoveredGroupId} onFocusGroup={setHoveredGroupId} intervalMode={intervalMode} unitLabel={unitLabel} message={chartMessage} />
                 {hasForecastData && (
                   <div className="legend">
                     {visibleSeries.map((item, index) => (
-                      <span
+                      <button
+                        type="button"
                         key={getSeriesId(item)}
-                        className={hoveredGroupId === getSeriesId(item) ? "active" : ""}
-                        onMouseEnter={() => setHoveredGroupId(getSeriesId(item))}
-                        onMouseLeave={() => setHoveredGroupId("")}
+                        className={(hoveredGroupId || getSeriesId(visibleSeries[0])) === getSeriesId(item) ? "active" : ""}
+                        onClick={() => setHoveredGroupId(getSeriesId(item))}
+                        aria-pressed={(hoveredGroupId || getSeriesId(visibleSeries[0])) === getSeriesId(item)}
                       >
                         <i style={{ backgroundColor: getSeriesColor(index, visibleSeries.length, 0.5) }} />
                         {getSeriesLabel(item)}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -1321,19 +1344,20 @@ export default function DomainForecastPage({ domain }) {
                   </div>
                   <div className="panel-pill-group"><span className="source-pill interval-context">{getBandLabel(intervalMode)}</span></div>
                 </div>
-                <ForecastChart series={visibleBreakdownSeries} hoveredGroupId={hoveredBreakdownId} onHoverGroup={setHoveredBreakdownId} intervalMode={intervalMode} unitLabel={unitLabel} message={breakdownMessage} />
+                <ForecastChart series={visibleBreakdownSeries} focusedGroupId={hoveredBreakdownId} onFocusGroup={setHoveredBreakdownId} intervalMode={intervalMode} unitLabel={unitLabel} message={breakdownMessage} />
                 {hasBreakdownData && (
                   <div className="legend">
                     {visibleBreakdownSeries.slice(0, 18).map((item, index) => (
-                      <span
+                      <button
+                        type="button"
                         key={getSeriesId(item)}
-                        className={hoveredBreakdownId === getSeriesId(item) ? "active" : ""}
-                        onMouseEnter={() => setHoveredBreakdownId(getSeriesId(item))}
-                        onMouseLeave={() => setHoveredBreakdownId("")}
+                        className={(hoveredBreakdownId || getSeriesId(visibleBreakdownSeries[0])) === getSeriesId(item) ? "active" : ""}
+                        onClick={() => setHoveredBreakdownId(getSeriesId(item))}
+                        aria-pressed={(hoveredBreakdownId || getSeriesId(visibleBreakdownSeries[0])) === getSeriesId(item)}
                       >
                         <i style={{ backgroundColor: getSeriesColor(index, visibleBreakdownSeries.length, 0.5) }} />
                         {getSeriesLabel(item)}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 )}
